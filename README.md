@@ -78,6 +78,10 @@ Accepted foreground app names default to:
 
 You can add or change names in Settings.
 
+## Finding the NTE Piano
+
+If you are looking for the in-game piano, it is located at Hethereau Skytower in the Miguel District. Take the elevator to the restaurant.
+
 ## NTE Layouts
 
 ### 21-Key Natural Layout

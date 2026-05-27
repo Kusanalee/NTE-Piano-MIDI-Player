@@ -227,6 +227,22 @@ final class AppViewModel: ObservableObject {
         AccessibilityPermission.openAccessibilitySettings()
     }
 
+    func sendCalibrationNatural() {
+        sendCalibration(keys: calibrationKeys(semitones: [0], exactModifiers: false), label: "Natural calibration")
+    }
+
+    func sendCalibrationSharp() {
+        sendCalibration(keys: calibrationKeys(semitones: [1], exactModifiers: true), label: "Shift sharp calibration")
+    }
+
+    func sendCalibrationFlat() {
+        sendCalibration(keys: calibrationKeys(semitones: [3], exactModifiers: true), label: "Ctrl flat calibration")
+    }
+
+    func sendCalibrationApproximation() {
+        sendCalibration(keys: calibrationKeys(semitones: [0, 2], exactModifiers: false), label: "Neighbor approximation calibration")
+    }
+
     func formatTime(_ time: TimeInterval) -> String {
         guard time.isFinite else { return "0:00" }
         let totalSeconds = max(0, Int(time.rounded()))
@@ -246,6 +262,58 @@ final class AppViewModel: ObservableObject {
 
     private func regenerateSheet() {
         sheetText = PianoSheetExporter().export(events: mappedEvents, options: sheetOptions)
+    }
+
+    private func sendCalibration(keys: [PianoKey], label: String) {
+        let settings = settingsStore.settings.clamped()
+        if !settings.dryRun, !AccessibilityPermission.isTrusted(prompt: true) {
+            statusMessage = "Accessibility permission is required for calibration key injection."
+            return
+        }
+        injector.dryRun = settings.dryRun
+        injector.clearDryRunLog()
+        injector.tapChord(
+            keys,
+            duration: settings.tapDuration,
+            stagger: settings.chordStagger,
+            modifierMode: settings.modifierInjectionMode,
+            modifierLeadTime: settings.modifierLeadTime,
+            modifierReleaseDelay: settings.modifierReleaseDelay,
+            dryRunDescription: label
+        )
+        dryRunLogText = injector.dryRunLog.joined(separator: "\n")
+        statusMessage = "\(label) sent."
+    }
+
+    private func calibrationKeys(semitones: [Int], exactModifiers: Bool) -> [PianoKey] {
+        semitones.compactMap { semitone in
+            let row = PianoRow.bas
+            let midiNote = settingsStore.settings.baseMidiNoteForBAS1 + semitone
+            guard let rowKeys = NTELayout.rowKeys[row] else { return nil }
+            if exactModifiers, let entry = NTELayout.chromaticDegreeMap[semitone] {
+                return PianoKey(
+                    row: row,
+                    semitone: semitone,
+                    degreeLabel: entry.degree,
+                    noteName: NTELayout.noteNames[semitone],
+                    keyboardKey: rowKeys[entry.naturalIndex],
+                    modifier: entry.modifier,
+                    midiNote: midiNote
+                )
+            }
+            guard let naturalIndex = NTELayout.naturalSemitones.firstIndex(of: semitone) else {
+                return nil
+            }
+            return PianoKey(
+                row: row,
+                semitone: semitone,
+                degreeLabel: NTELayout.naturalDegreeLabels[naturalIndex],
+                noteName: NTELayout.noteNames[semitone],
+                keyboardKey: rowKeys[naturalIndex],
+                modifier: .none,
+                midiNote: midiNote
+            )
+        }
     }
 
     private func handleFinish(_ reason: PlaybackFinishReason) {

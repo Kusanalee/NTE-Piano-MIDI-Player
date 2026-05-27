@@ -19,6 +19,12 @@ struct DiagnosticsView: View {
                     stat("Merged", diagnostics.duplicateNotesMerged)
                     stat("Big chords", diagnostics.chordsExceedingLimit)
                 }
+                GridRow {
+                    stat("Approx", diagnostics.notesApproximated)
+                    stat("Folded", diagnostics.notesRangeFolded)
+                    stat("Mod exact", diagnostics.modifierExactNotes)
+                    stat("Expanded", diagnostics.multiKeyExpandedNotes)
+                }
             }
 
             if diagnostics.hasWarnings {

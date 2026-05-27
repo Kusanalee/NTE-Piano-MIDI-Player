@@ -90,11 +90,24 @@ public struct PianoKey: Codable, Equatable, Hashable, Identifiable {
     }
 }
 
+public enum MappingKind: String, Codable, CaseIterable, Identifiable {
+    case exact
+    case modifierExact
+    case neighborApproximation
+    case rangeFolded
+    case snapped
+    case skipped
+
+    public var id: String { rawValue }
+}
+
 public struct MappedNoteEvent: Codable, Equatable, Identifiable {
     public var id: UUID
     public var source: MidiNoteEvent
     public var adjustedMidiNote: Int
-    public var pianoKey: PianoKey
+    public var pianoKeys: [PianoKey]
+    public var mappingKind: MappingKind
+    public var wasRangeFolded: Bool
     public var startTime: TimeInterval
     public var duration: TimeInterval
 
@@ -102,16 +115,50 @@ public struct MappedNoteEvent: Codable, Equatable, Identifiable {
         id: UUID = UUID(),
         source: MidiNoteEvent,
         adjustedMidiNote: Int,
-        pianoKey: PianoKey,
+        pianoKeys: [PianoKey],
+        mappingKind: MappingKind,
+        wasRangeFolded: Bool = false,
         startTime: TimeInterval,
         duration: TimeInterval
     ) {
         self.id = id
         self.source = source
         self.adjustedMidiNote = adjustedMidiNote
-        self.pianoKey = pianoKey
+        self.pianoKeys = pianoKeys
+        self.mappingKind = mappingKind
+        self.wasRangeFolded = wasRangeFolded
         self.startTime = startTime
         self.duration = duration
+    }
+
+    public init(
+        id: UUID = UUID(),
+        source: MidiNoteEvent,
+        adjustedMidiNote: Int,
+        pianoKey: PianoKey,
+        mappingKind: MappingKind = .exact,
+        wasRangeFolded: Bool = false,
+        startTime: TimeInterval,
+        duration: TimeInterval
+    ) {
+        self.init(
+            id: id,
+            source: source,
+            adjustedMidiNote: adjustedMidiNote,
+            pianoKeys: [pianoKey],
+            mappingKind: mappingKind,
+            wasRangeFolded: wasRangeFolded,
+            startTime: startTime,
+            duration: duration
+        )
+    }
+
+    public var pianoKey: PianoKey {
+        pianoKeys[0]
+    }
+
+    public var keyboardLabel: String {
+        pianoKeys.map(\.keyboardLabel).joined(separator: "+")
     }
 }
 
@@ -124,6 +171,10 @@ public struct MappingDiagnostics: Codable, Equatable {
     public var notesSnapped: Int = 0
     public var duplicateNotesMerged: Int = 0
     public var chordsExceedingLimit: Int = 0
+    public var notesApproximated: Int = 0
+    public var notesRangeFolded: Int = 0
+    public var modifierExactNotes: Int = 0
+    public var multiKeyExpandedNotes: Int = 0
     public var warnings: [String] = []
 
     public init() {}
@@ -135,6 +186,10 @@ public struct MappingDiagnostics: Codable, Equatable {
             notesSnapped > 0 ||
             duplicateNotesMerged > 0 ||
             chordsExceedingLimit > 0 ||
+            notesApproximated > 0 ||
+            notesRangeFolded > 0 ||
+            modifierExactNotes > 0 ||
+            multiKeyExpandedNotes > 0 ||
             !warnings.isEmpty
     }
 }

@@ -28,15 +28,20 @@ public enum MacVirtualKeyCodes {
         }
     }
 
-    public static func code(for modifier: KeyModifier) -> CGKeyCode? {
+    public static func code(for modifier: KeyModifier, side: ModifierKeySide = .left) -> CGKeyCode? {
         switch modifier {
         case .none: nil
-        case .shift: 56
-        case .control: 59
+        case .shift: side == .left ? 56 : 60
+        case .control: side == .left ? 59 : 62
         }
     }
 
     public static var escape: CGKeyCode { 53 }
+}
+
+public enum ModifierKeySide: String, Codable, Equatable {
+    case left
+    case right
 }
 
 public extension KeyModifier {

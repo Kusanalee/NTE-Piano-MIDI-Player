@@ -69,6 +69,16 @@ struct SettingsView: View {
                     Stepper("Simultaneous key limit: \(settingsStore.settings.simultaneousKeyLimit)", value: binding(\.simultaneousKeyLimit), in: 1...12)
                 }
 
+                Section("Multi-Key Approximation") {
+                    Toggle("Enable multi-key approximation", isOn: binding(\.multiKeyApproximationEnabled))
+                    Picker("Accidentals", selection: binding(\.accidentalPlaybackMode)) {
+                        ForEach(AccidentalPlaybackMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    Stepper("Max approximation keys: \(settingsStore.settings.maxApproximationKeys)", value: binding(\.maxApproximationKeys), in: 1...3)
+                }
+
                 Section("Safety") {
                     Toggle("Dry-run mode", isOn: binding(\.dryRun))
                     Picker("Emergency stop", selection: binding(\.emergencyStopHotkey)) {
@@ -78,6 +88,22 @@ struct SettingsView: View {
                     }
                     TextField("Accepted foreground app names", text: acceptedAppNamesBinding)
                     Button("Open Accessibility Settings", action: viewModel.openAccessibilitySettings)
+                }
+
+                Section("Modifier Calibration") {
+                    Picker("Modifier mode", selection: binding(\.modifierInjectionMode)) {
+                        ForEach(ModifierInjectionMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    labeledSlider("Modifier lead", value: binding(\.modifierLeadTime), range: 0...0.150, suffix: "s")
+                    labeledSlider("Release delay", value: binding(\.modifierReleaseDelay), range: 0...0.100, suffix: "s")
+                    HStack {
+                        Button("Natural", action: viewModel.sendCalibrationNatural)
+                        Button("Shift sharp", action: viewModel.sendCalibrationSharp)
+                        Button("Ctrl flat", action: viewModel.sendCalibrationFlat)
+                        Button("Neighbor pair", action: viewModel.sendCalibrationApproximation)
+                    }
                 }
 
                 Section("Appearance") {

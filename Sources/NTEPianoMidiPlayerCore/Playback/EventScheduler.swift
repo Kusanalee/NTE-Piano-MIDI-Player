@@ -143,7 +143,16 @@ public final class EventScheduler {
             }
 
             let duration = keyPressDuration(for: group, settings: settings)
-            injector.tapChord(group.events.map(\.pianoKey), duration: duration, stagger: settings.chordStagger)
+            let keys = group.events.flatMap(\.pianoKeys)
+            injector.tapChord(
+                keys,
+                duration: duration,
+                stagger: settings.chordStagger,
+                modifierMode: settings.modifierInjectionMode,
+                modifierLeadTime: settings.modifierLeadTime,
+                modifierReleaseDelay: settings.modifierReleaseDelay,
+                dryRunDescription: dryRunDescription(for: group, settings: settings)
+            )
             onProgress(group.startTime)
         }
 
@@ -170,6 +179,15 @@ public final class EventScheduler {
         return settings.tapDuration
     }
 
+    private func dryRunDescription(for group: MappedNoteGroup, settings: PlaybackSettings) -> String {
+        group.events.map { event in
+            let semitone = positiveModulo(event.adjustedMidiNote - settings.baseMidiNoteForBAS1, 12)
+            let noteName = NTELayout.noteNames[semitone]
+            return "\(noteName) -> \(event.keyboardLabel)"
+        }
+        .joined(separator: "; ")
+    }
+
     private func wait(until targetSeconds: TimeInterval, startNanos: UInt64, runID: UUID) -> Bool {
         let targetOffset = UInt64(max(0, targetSeconds) * 1_000_000_000)
 
@@ -194,5 +212,10 @@ public final class EventScheduler {
             let remaining = TimeInterval(target - now) / 1_000_000_000
             Thread.sleep(forTimeInterval: min(max(remaining, 0.001), 0.005))
         }
+    }
+
+    private func positiveModulo(_ value: Int, _ divisor: Int) -> Int {
+        let remainder = value % divisor
+        return remainder >= 0 ? remainder : remainder + divisor
     }
 }

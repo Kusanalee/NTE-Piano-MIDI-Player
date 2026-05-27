@@ -50,6 +50,31 @@ final class PianoSheetExporterTests: XCTestCase {
         XCTAssertEqual(text, "C,D\nE")
     }
 
+    func testCompositeNoteUsesPlusAndMidiChordUsesBrackets() {
+        let settings = PlaybackSettings(layoutMode: .nte36Chromatic, baseMidiNoteForBAS1: 48)
+        let mapped = NTE36ChromaticMapper().map(
+            events: [
+                note(49, start: 0),
+                note(52, start: 0.005)
+            ],
+            settings: settings
+        ).mappedEvents
+
+        let text = PianoSheetExporter().export(
+            events: mapped,
+            options: PianoSheetOptions(
+                showNoteNames: false,
+                showScaleDegrees: false,
+                showKeyboardKeys: true,
+                delimiter: " ",
+                lineLength: 8,
+                useChordBrackets: true
+            )
+        )
+
+        XCTAssertEqual(text, "[Z+X C]")
+    }
+
     private func note(_ midiNote: Int, start: TimeInterval) -> MidiNoteEvent {
         MidiNoteEvent(
             midiNote: UInt8(midiNote),

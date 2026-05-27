@@ -56,19 +56,22 @@ public struct PianoSheetExporter {
     }
 
     private func token(for event: MappedNoteEvent, options: PianoSheetOptions) -> String {
-        var parts: [String] = []
-        if options.showNoteNames {
-            parts.append(event.pianoKey.noteName)
+        let keyTokens = event.pianoKeys.map { key in
+            var parts: [String] = []
+            if options.showNoteNames {
+                parts.append(key.noteName)
+            }
+            if options.showScaleDegrees {
+                parts.append("\(key.row.rawValue)\(key.degreeLabel)")
+            }
+            if options.showKeyboardKeys {
+                parts.append(key.keyboardLabel)
+            }
+            if parts.isEmpty {
+                return key.keyboardLabel
+            }
+            return parts.joined(separator: ":")
         }
-        if options.showScaleDegrees {
-            parts.append("\(event.pianoKey.row.rawValue)\(event.pianoKey.degreeLabel)")
-        }
-        if options.showKeyboardKeys {
-            parts.append(event.pianoKey.keyboardLabel)
-        }
-        if parts.isEmpty {
-            return event.pianoKey.keyboardLabel
-        }
-        return parts.joined(separator: ":")
+        return keyTokens.joined(separator: "+")
     }
 }

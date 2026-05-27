@@ -62,11 +62,11 @@ This mode plays C-major natural notes only.
 | MID | A | S | D | F | G | H | J |
 | BAS | Z | X | C | V | B | N | M |
 
-Accidentals can be skipped, snapped to the nearest natural note, or transposed from a source major key into C major.
+By default, accidentals are approximated with neighboring natural keys so more MIDI notes remain playable, for example `C# -> C+D`, `Eb -> D+E`, `F# -> F+G`, `G# -> G+A`, and `Bb -> A+B`. You can disable multi-key approximation to return to skip/snap behavior.
 
 ### 36-Key Chromatic Layout
 
-This mode maps all 12 semitones per octave. NTE uses Shift for sharps and Control for flats.
+This mode can map all 12 semitones per octave. Because NTE may not reliably honor synthetic Shift/Ctrl events on every Mac/game setup, the default is neighbor approximation for accidentals. You can switch accidentals back to exact Shift/Ctrl mappings in Settings.
 
 | Degree | BAS | MID | TRE |
 | --- | --- | --- | --- |
@@ -96,8 +96,10 @@ The BAS base note is configurable. MID and TRE automatically follow at +12 and +
 - MIDI loading with track names, channels, programs, note counts, tempo, time signatures, and tempo-aware timing.
 - Track enable, mute, solo, and search.
 - 21-key and 36-key NTE mapping.
+- Multi-key approximation for accidentals and folded out-of-range notes.
+- Configurable Shift/Ctrl injection strategies with calibration buttons.
 - Transpose, octave shift, source/target key settings, and range diagnostics.
-- Dry-run mode that logs intended key events.
+- Dry-run mode that logs intended mappings such as `C# -> Z+X`.
 - CGEvent keyboard injection with Accessibility checks.
 - Foreground-app safety check before each note group.
 - Manual keyboard remapping in Settings.

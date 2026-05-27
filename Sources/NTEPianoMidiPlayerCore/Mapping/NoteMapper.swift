@@ -38,23 +38,19 @@ private struct MappingPipeline {
         diagnostics.totalInputNotes = events.count
 
         var mapped: [MappedNoteEvent] = []
-        for event in events.sorted(by: {
-            if $0.startTime == $1.startTime {
-                return $0.midiNote < $1.midiNote
-            }
-            return $0.startTime < $1.startTime
-        }) {
-            guard let adjustedNote = adjustedMidiNote(for: event, settings: settings, diagnostics: &diagnostics) else {
+        for event in sorted(events) {
+            guard let adjusted = adjustedMidiNote(for: event, settings: settings, diagnostics: &diagnostics),
+                  let mapping = pianoKeys(for: adjusted.note, settings: settings, rangeFolded: adjusted.rangeFolded, diagnostics: &diagnostics) else {
                 continue
             }
-            guard let pianoKey = pianoKey(for: adjustedNote, settings: settings, diagnostics: &diagnostics) else {
-                continue
-            }
+
             mapped.append(
                 MappedNoteEvent(
                     source: event,
-                    adjustedMidiNote: adjustedNote,
-                    pianoKey: pianoKey,
+                    adjustedMidiNote: adjusted.note,
+                    pianoKeys: mapping.keys,
+                    mappingKind: mapping.kind,
+                    wasRangeFolded: adjusted.rangeFolded,
                     startTime: event.startTime,
                     duration: event.duration
                 )
@@ -72,19 +68,34 @@ private struct MappingPipeline {
         return NoteMapperResult(mappedEvents: mapped, diagnostics: diagnostics)
     }
 
+    private struct AdjustedNote {
+        var note: Int
+        var rangeFolded: Bool
+    }
+
+    private struct KeyMapping {
+        var keys: [PianoKey]
+        var kind: MappingKind
+    }
+
+    private func sorted(_ events: [MidiNoteEvent]) -> [MidiNoteEvent] {
+        events.sorted {
+            if $0.startTime == $1.startTime {
+                return $0.midiNote < $1.midiNote
+            }
+            return $0.startTime < $1.startTime
+        }
+    }
+
     private func adjustedMidiNote(
         for event: MidiNoteEvent,
         settings: PlaybackSettings,
         diagnostics: inout MappingDiagnostics
-    ) -> Int? {
+    ) -> AdjustedNote? {
         var note = Int(event.midiNote) + settings.globalTranspose + (settings.octaveShift * 12)
 
         if layoutMode == .nte21Natural, settings.naturalScaleHandling == .transposeSongToFitCMajor {
-            guard let transposed = majorScaleTransposition(
-                midiNote: note,
-                sourceKey: settings.sourceKey,
-                targetKey: .c
-            ) else {
+            guard let transposed = majorScaleTransposition(midiNote: note, sourceKey: settings.sourceKey, targetKey: .c) else {
                 diagnostics.notesSkipped += 1
                 return nil
             }
@@ -100,14 +111,26 @@ private struct MappingPipeline {
         _ note: Int,
         settings: PlaybackSettings,
         diagnostics: inout MappingDiagnostics
-    ) -> Int? {
+    ) -> AdjustedNote? {
         let range = settings.playableRange
-        guard !range.contains(note) else { return note }
+        guard !range.contains(note) else {
+            return AdjustedNote(note: note, rangeFolded: false)
+        }
 
         if note < range.lowerBound {
             diagnostics.notesBelowRange += 1
         } else {
             diagnostics.notesAboveRange += 1
+        }
+
+        if settings.multiKeyApproximationEnabled {
+            var folded = note
+            while folded < range.lowerBound { folded += 12 }
+            while folded > range.upperBound { folded -= 12 }
+            if range.contains(folded) {
+                diagnostics.notesRangeFolded += 1
+                return AdjustedNote(note: folded, rangeFolded: true)
+            }
         }
 
         switch settings.autoFitMode {
@@ -119,91 +142,181 @@ private struct MappingPipeline {
             while shifted < range.lowerBound { shifted += 12 }
             while shifted > range.upperBound { shifted -= 12 }
             if range.contains(shifted) {
-                return shifted
+                return AdjustedNote(note: shifted, rangeFolded: false)
             }
             diagnostics.notesSkipped += 1
             return nil
         case .clampOrSkip:
-            return min(max(note, range.lowerBound), range.upperBound)
+            return AdjustedNote(note: min(max(note, range.lowerBound), range.upperBound), rangeFolded: false)
         }
     }
 
-    private func pianoKey(
+    private func pianoKeys(
         for adjustedNote: Int,
         settings: PlaybackSettings,
+        rangeFolded: Bool,
         diagnostics: inout MappingDiagnostics
-    ) -> PianoKey? {
-        guard NTELayout.row(for: adjustedNote, baseMidiNote: settings.baseMidiNoteForBAS1) != nil else {
+    ) -> KeyMapping? {
+        guard let row = NTELayout.row(for: adjustedNote, baseMidiNote: settings.baseMidiNoteForBAS1) else {
             diagnostics.notesSkipped += 1
             return nil
         }
 
-        var note = adjustedNote
-        var semitone = positiveModulo(note - settings.baseMidiNoteForBAS1, 12)
+        let semitone = positiveModulo(adjustedNote - settings.baseMidiNoteForBAS1, 12)
+        if NTELayout.naturalSemitones.contains(semitone) {
+            guard var key = naturalKey(for: adjustedNote, row: row, semitone: semitone, settings: settings) else {
+                diagnostics.notesSkipped += 1
+                return nil
+            }
+            var keys = [key]
+            if rangeFolded, settings.maxApproximationKeys >= 3,
+               let color = rangeColorKey(for: adjustedNote, primaryKeys: keys, settings: settings) {
+                keys.append(color)
+                diagnostics.multiKeyExpandedNotes += 1
+            }
+            key = keys[0]
+            return KeyMapping(keys: keys, kind: rangeFolded ? .rangeFolded : .exact)
+        }
 
-        if layoutMode == .nte21Natural, !NTELayout.naturalSemitones.contains(semitone) {
+        if shouldApproximateAccidental(settings: settings) {
+            guard var keys = neighborApproximationKeys(for: adjustedNote, row: row, semitone: semitone, settings: settings) else {
+                diagnostics.notesSkipped += 1
+                return nil
+            }
+            if rangeFolded, settings.maxApproximationKeys >= 3,
+               let color = rangeColorKey(for: adjustedNote, primaryKeys: keys, settings: settings) {
+                keys.append(color)
+            }
+            diagnostics.notesApproximated += 1
+            if keys.count > 1 {
+                diagnostics.multiKeyExpandedNotes += 1
+            }
+            return KeyMapping(keys: keys, kind: rangeFolded ? .rangeFolded : .neighborApproximation)
+        }
+
+        switch layoutMode {
+        case .nte21Natural:
             switch settings.naturalScaleHandling {
             case .skipUnplayable, .transposeSongToFitCMajor:
                 diagnostics.notesSkipped += 1
                 return nil
             case .snapToNearest:
-                note = snapToNearestNatural(
-                    note,
-                    baseMidiNote: settings.baseMidiNoteForBAS1,
-                    range: settings.playableRange
-                )
-                semitone = positiveModulo(note - settings.baseMidiNoteForBAS1, 12)
+                let snapped = snapToNearestNatural(adjustedNote, baseMidiNote: settings.baseMidiNoteForBAS1, range: settings.playableRange)
+                let snappedSemitone = positiveModulo(snapped - settings.baseMidiNoteForBAS1, 12)
+                guard let snappedRow = NTELayout.row(for: snapped, baseMidiNote: settings.baseMidiNoteForBAS1),
+                      let key = naturalKey(for: snapped, row: snappedRow, semitone: snappedSemitone, settings: settings) else {
+                    diagnostics.notesSkipped += 1
+                    return nil
+                }
                 diagnostics.notesSnapped += 1
+                return KeyMapping(keys: [key], kind: .snapped)
             }
+        case .nte36Chromatic:
+            guard let key = chromaticModifierKey(for: adjustedNote, row: row, semitone: semitone, settings: settings) else {
+                diagnostics.notesSkipped += 1
+                return nil
+            }
+            diagnostics.modifierExactNotes += 1
+            return KeyMapping(keys: [key], kind: rangeFolded ? .rangeFolded : .modifierExact)
         }
+    }
 
-        guard let rowAfterSnap = NTELayout.row(for: note, baseMidiNote: settings.baseMidiNoteForBAS1) else {
-            diagnostics.notesSkipped += 1
+    private func shouldApproximateAccidental(settings: PlaybackSettings) -> Bool {
+        settings.multiKeyApproximationEnabled && settings.accidentalPlaybackMode == .approximateWithNeighbors
+    }
+
+    private func naturalKey(
+        for midiNote: Int,
+        row: PianoRow,
+        semitone: Int,
+        settings: PlaybackSettings
+    ) -> PianoKey? {
+        guard let naturalIndex = NTELayout.naturalSemitones.firstIndex(of: semitone),
+              let keys = NTELayout.rowKeys[row] else {
             return nil
         }
+        let keyboardKey = manualOverride(row: row, semitone: semitone, settings: settings) ?? keys[naturalIndex]
+        return PianoKey(
+            row: row,
+            semitone: semitone,
+            degreeLabel: NTELayout.naturalDegreeLabels[naturalIndex],
+            noteName: NTELayout.noteNames[semitone],
+            keyboardKey: keyboardKey,
+            modifier: .none,
+            midiNote: midiNote
+        )
+    }
 
-        switch layoutMode {
-        case .nte21Natural:
-            guard let naturalIndex = NTELayout.naturalSemitones.firstIndex(of: semitone),
-                  let keys = NTELayout.rowKeys[rowAfterSnap] else {
-                diagnostics.notesSkipped += 1
-                return nil
-            }
-            let key = manualOverride(
-                row: rowAfterSnap,
-                semitone: semitone,
-                settings: settings
-            ) ?? keys[naturalIndex]
-            return PianoKey(
-                row: rowAfterSnap,
-                semitone: semitone,
-                degreeLabel: NTELayout.naturalDegreeLabels[naturalIndex],
-                noteName: NTELayout.noteNames[semitone],
-                keyboardKey: key,
-                modifier: .none,
-                midiNote: note
-            )
-        case .nte36Chromatic:
-            guard let entry = NTELayout.chromaticDegreeMap[semitone],
-                  let keys = NTELayout.rowKeys[rowAfterSnap] else {
-                diagnostics.notesSkipped += 1
-                return nil
-            }
-            let key = manualOverride(
-                row: rowAfterSnap,
-                semitone: semitone,
-                settings: settings
-            ) ?? keys[entry.naturalIndex]
-            return PianoKey(
-                row: rowAfterSnap,
-                semitone: semitone,
-                degreeLabel: entry.degree,
-                noteName: NTELayout.noteNames[semitone],
-                keyboardKey: key,
-                modifier: entry.modifier,
-                midiNote: note
-            )
+    private func chromaticModifierKey(
+        for midiNote: Int,
+        row: PianoRow,
+        semitone: Int,
+        settings: PlaybackSettings
+    ) -> PianoKey? {
+        guard let entry = NTELayout.chromaticDegreeMap[semitone],
+              let keys = NTELayout.rowKeys[row] else {
+            return nil
         }
+        let keyboardKey = manualOverride(row: row, semitone: semitone, settings: settings) ?? keys[entry.naturalIndex]
+        return PianoKey(
+            row: row,
+            semitone: semitone,
+            degreeLabel: entry.degree,
+            noteName: NTELayout.noteNames[semitone],
+            keyboardKey: keyboardKey,
+            modifier: entry.modifier,
+            midiNote: midiNote
+        )
+    }
+
+    private func neighborApproximationKeys(
+        for midiNote: Int,
+        row: PianoRow,
+        semitone: Int,
+        settings: PlaybackSettings
+    ) -> [PianoKey]? {
+        guard let pair = neighborNaturalSemitones(for: semitone),
+              let lower = naturalKey(for: midiNote - semitone + pair.lower, row: row, semitone: pair.lower, settings: settings),
+              let upper = naturalKey(for: midiNote - semitone + pair.upper, row: row, semitone: pair.upper, settings: settings) else {
+            return nil
+        }
+        return Array([lower, upper].prefix(settings.maxApproximationKeys))
+    }
+
+    private func neighborNaturalSemitones(for semitone: Int) -> (lower: Int, upper: Int)? {
+        switch semitone {
+        case 1: (0, 2)
+        case 3: (2, 4)
+        case 6: (5, 7)
+        case 8: (7, 9)
+        case 10: (9, 11)
+        default: nil
+        }
+    }
+
+    private func rangeColorKey(
+        for foldedNote: Int,
+        primaryKeys: [PianoKey],
+        settings: PlaybackSettings
+    ) -> PianoKey? {
+        for offset in [12, -12] {
+            let candidate = foldedNote + offset
+            guard settings.playableRange.contains(candidate),
+                  let row = NTELayout.row(for: candidate, baseMidiNote: settings.baseMidiNoteForBAS1) else {
+                continue
+            }
+            let semitone = positiveModulo(candidate - settings.baseMidiNoteForBAS1, 12)
+            let key: PianoKey?
+            if NTELayout.naturalSemitones.contains(semitone) {
+                key = naturalKey(for: candidate, row: row, semitone: semitone, settings: settings)
+            } else {
+                key = neighborApproximationKeys(for: candidate, row: row, semitone: semitone, settings: settings)?.first
+            }
+            if let key, !primaryKeys.contains(where: { $0.keyboardKey == key.keyboardKey && $0.modifier == key.modifier }) {
+                return key
+            }
+        }
+        return nil
     }
 
     private func manualOverride(row: PianoRow, semitone: Int, settings: PlaybackSettings) -> KeyboardKey? {
@@ -230,9 +343,8 @@ private struct MappingPipeline {
         sourceKey: MusicalKey,
         targetKey: MusicalKey
     ) -> Int? {
-        let majorScale = NTELayout.naturalSemitones
         let sourceRelative = positiveModulo(midiNote - sourceKey.semitone, 12)
-        guard majorScale.contains(sourceRelative) else {
+        guard NTELayout.naturalSemitones.contains(sourceRelative) else {
             return nil
         }
         return midiNote + targetKey.semitone - sourceKey.semitone
@@ -248,7 +360,10 @@ private struct MappingPipeline {
         var kept: [MappedNoteEvent] = []
 
         for event in events {
-            let signature = "\(event.pianoKey.row.rawValue)-\(event.pianoKey.keyboardKey.rawValue)-\(event.pianoKey.modifier.rawValue)"
+            let signature = event.pianoKeys
+                .map { "\($0.row.rawValue)-\($0.keyboardKey.rawValue)-\($0.modifier.rawValue)" }
+                .sorted()
+                .joined(separator: "|")
             if let last = lastSeen[signature], event.startTime - last <= threshold {
                 diagnostics.duplicateNotesMerged += 1
                 continue
@@ -271,11 +386,11 @@ private struct MappingPipeline {
 
         for event in events {
             if event.startTime - groupStart <= threshold {
-                groupSize += 1
+                groupSize += event.pianoKeys.count
             } else {
                 if groupSize > limit { count += 1 }
                 groupStart = event.startTime
-                groupSize = 1
+                groupSize = event.pianoKeys.count
             }
         }
         if groupSize > limit { count += 1 }
@@ -295,6 +410,18 @@ private struct MappingPipeline {
         }
         if diagnostics.notesSnapped > 0 {
             warnings.append("\(diagnostics.notesSnapped) notes were snapped to natural notes.")
+        }
+        if diagnostics.notesApproximated > 0 {
+            warnings.append("\(diagnostics.notesApproximated) notes were approximated with neighbor keys.")
+        }
+        if diagnostics.notesRangeFolded > 0 {
+            warnings.append("\(diagnostics.notesRangeFolded) notes were octave-folded into range.")
+        }
+        if diagnostics.modifierExactNotes > 0 {
+            warnings.append("\(diagnostics.modifierExactNotes) notes used Shift/Ctrl modifier mappings.")
+        }
+        if diagnostics.multiKeyExpandedNotes > 0 {
+            warnings.append("\(diagnostics.multiKeyExpandedNotes) notes expanded to multiple keys.")
         }
         if diagnostics.duplicateNotesMerged > 0 {
             warnings.append("\(diagnostics.duplicateNotesMerged) duplicate mapped notes were merged.")

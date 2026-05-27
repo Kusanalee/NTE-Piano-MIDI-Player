@@ -16,7 +16,7 @@ public enum EventTimelineBuilder {
     public static func group(events: [MappedNoteEvent], threshold: TimeInterval) -> [MappedNoteGroup] {
         let sorted = events.sorted {
             if $0.startTime == $1.startTime {
-                return $0.pianoKey.midiNote < $1.pianoKey.midiNote
+                return $0.primarySortMidiNote < $1.primarySortMidiNote
             }
             return $0.startTime < $1.startTime
         }
@@ -44,15 +44,17 @@ public enum EventTimelineBuilder {
     public static func orderedForInjection(_ events: [MappedNoteEvent]) -> [MappedNoteEvent] {
         let modifierOrder: [KeyModifier: Int] = [.none: 0, .shift: 1, .control: 2]
         return events.sorted {
-            let leftModifier = modifierOrder[$0.pianoKey.modifier] ?? 0
-            let rightModifier = modifierOrder[$1.pianoKey.modifier] ?? 0
+            let leftKey = $0.primarySortKey
+            let rightKey = $1.primarySortKey
+            let leftModifier = modifierOrder[leftKey.modifier] ?? 0
+            let rightModifier = modifierOrder[rightKey.modifier] ?? 0
             if leftModifier != rightModifier {
                 return leftModifier < rightModifier
             }
-            if $0.pianoKey.row != $1.pianoKey.row {
-                return rowOrder($0.pianoKey.row) < rowOrder($1.pianoKey.row)
+            if leftKey.row != rightKey.row {
+                return rowOrder(leftKey.row) < rowOrder(rightKey.row)
             }
-            return $0.pianoKey.midiNote < $1.pianoKey.midiNote
+            return leftKey.midiNote < rightKey.midiNote
         }
     }
 
@@ -62,5 +64,15 @@ public enum EventTimelineBuilder {
         case .mid: 1
         case .tre: 2
         }
+    }
+}
+
+private extension MappedNoteEvent {
+    var primarySortKey: PianoKey {
+        pianoKeys.first ?? pianoKey
+    }
+
+    var primarySortMidiNote: Int {
+        primarySortKey.midiNote
     }
 }

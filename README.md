@@ -147,6 +147,8 @@ Using automation in online games may violate game rules or terms of service. Use
 
 ## Known Limitations
 
+- Playback will not reproduce every MIDI file perfectly. NTE's piano has a limited playable range, game-specific input timing, and layer behavior for sharp/flat notes, so some notes may be skipped, folded, approximated, delayed, or simplified even when the app is working correctly.
+- Please do not open issues requesting perfect playback for arbitrary MIDI files or reporting that a song is not 100% accurate when the cause is NTE's piano/input limitations. Issues are welcome for app bugs, crashes, incorrect documented mappings, packaging problems, or reproducible behavior that differs from the settings described here.
 - Live MIDI input is deferred from the MVP.
 - Playlist queue polish is deferred from the MVP.
 - The emergency stop shortcut is available while the app can receive keyboard commands; a full global hotkey can be added later if needed.

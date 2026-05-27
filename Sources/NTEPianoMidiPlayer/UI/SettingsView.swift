@@ -104,6 +104,10 @@ struct SettingsView: View {
                     labeledSlider("Modifier lead", value: binding(\.modifierLeadTime), range: 0...0.500, suffix: "s")
                     labeledSlider("Release delay", value: binding(\.modifierReleaseDelay), range: 0...0.100, suffix: "s")
                     labeledSlider("Reuse window", value: binding(\.modifierReuseWindow), range: 0...1.000, suffix: "s")
+                    labeledSlider("Layer switch gap", value: binding(\.layerSwitchGap), range: 0...0.250, suffix: "s")
+                    Text("Calibration uses the countdown. Focus NTE and watch the piano layer before each note lands.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     HStack {
                         Button("Hold Shift", action: viewModel.holdCalibrationShift)
                         Button("Hold Ctrl", action: viewModel.holdCalibrationControl)
@@ -113,6 +117,7 @@ struct SettingsView: View {
                         Button("Shift sharp", action: viewModel.sendCalibrationSharp)
                         Button("Ctrl flat", action: viewModel.sendCalibrationFlat)
                         Button("Neighbor pair", action: viewModel.sendCalibrationApproximation)
+                        Button("Layer sequence", action: viewModel.sendCalibrationLayerSequence)
                     }
                 }
 

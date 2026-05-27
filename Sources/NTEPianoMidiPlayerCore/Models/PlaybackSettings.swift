@@ -183,6 +183,7 @@ public struct PlaybackSettings: Codable, Equatable {
     public var modifierLeadTime: Double
     public var modifierReleaseDelay: Double
     public var modifierReuseWindow: Double
+    public var layerSwitchGap: Double
     public var eventPostTarget: EventPostTarget
 
     private enum CodingKeys: String, CodingKey {
@@ -216,6 +217,7 @@ public struct PlaybackSettings: Codable, Equatable {
         case modifierLeadTime
         case modifierReleaseDelay
         case modifierReuseWindow
+        case layerSwitchGap
         case eventPostTarget
     }
 
@@ -250,6 +252,7 @@ public struct PlaybackSettings: Codable, Equatable {
         modifierLeadTime: Double = 0.120,
         modifierReleaseDelay: Double = 0.008,
         modifierReuseWindow: Double = 0.120,
+        layerSwitchGap: Double = 0.020,
         eventPostTarget: EventPostTarget = .hidEventTap
     ) {
         self.layoutMode = layoutMode
@@ -282,6 +285,7 @@ public struct PlaybackSettings: Codable, Equatable {
         self.modifierLeadTime = modifierLeadTime
         self.modifierReleaseDelay = modifierReleaseDelay
         self.modifierReuseWindow = modifierReuseWindow
+        self.layerSwitchGap = layerSwitchGap
         self.eventPostTarget = eventPostTarget
     }
 
@@ -319,6 +323,7 @@ public struct PlaybackSettings: Codable, Equatable {
             modifierLeadTime: try container.decodeIfPresent(Double.self, forKey: .modifierLeadTime) ?? fallback.modifierLeadTime,
             modifierReleaseDelay: try container.decodeIfPresent(Double.self, forKey: .modifierReleaseDelay) ?? fallback.modifierReleaseDelay,
             modifierReuseWindow: try container.decodeIfPresent(Double.self, forKey: .modifierReuseWindow) ?? fallback.modifierReuseWindow,
+            layerSwitchGap: try container.decodeIfPresent(Double.self, forKey: .layerSwitchGap) ?? fallback.layerSwitchGap,
             eventPostTarget: try container.decodeIfPresent(EventPostTarget.self, forKey: .eventPostTarget) ?? fallback.eventPostTarget
         )
     }
@@ -355,6 +360,7 @@ public struct PlaybackSettings: Codable, Equatable {
         try container.encode(modifierLeadTime, forKey: .modifierLeadTime)
         try container.encode(modifierReleaseDelay, forKey: .modifierReleaseDelay)
         try container.encode(modifierReuseWindow, forKey: .modifierReuseWindow)
+        try container.encode(layerSwitchGap, forKey: .layerSwitchGap)
         try container.encode(eventPostTarget, forKey: .eventPostTarget)
     }
 
@@ -387,6 +393,7 @@ public struct PlaybackSettings: Codable, Equatable {
         copy.modifierLeadTime = min(max(copy.modifierLeadTime, 0), 0.500)
         copy.modifierReleaseDelay = min(max(copy.modifierReleaseDelay, 0), 0.100)
         copy.modifierReuseWindow = min(max(copy.modifierReuseWindow, 0), 1.000)
+        copy.layerSwitchGap = min(max(copy.layerSwitchGap, 0), 0.250)
         copy.acceptedForegroundAppNames = copy.acceptedForegroundAppNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }

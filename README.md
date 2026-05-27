@@ -68,7 +68,7 @@ By default, accidentals are approximated with neighboring natural keys so more M
 
 This mode can map all 12 semitones per octave. Because NTE may not reliably honor synthetic Shift/Ctrl events on every Mac/game setup, the default is neighbor approximation for accidentals. You can switch accidentals back to exact Shift/Ctrl mappings in Settings.
 
-When exact Shift/Ctrl mode is enabled, the scheduler treats Shift and Ctrl as held NTE piano layers: it presses the modifier before the note, waits for the configured lead time, taps the base key, then releases the modifier after key-up. Settings include calibration buttons to hold only Shift or Ctrl for two seconds, plus test notes for `Shift+Z` and `Ctrl+C`; these calibration actions use the configured countdown so you have time to focus NTE. If HID posting does not switch the visible NTE layer on your setup, try the Session event tap or Frontmost app PID event target in Settings.
+When exact Shift/Ctrl mode is enabled, the scheduler treats natural, sharp, and flat notes as separate NTE piano layers. It releases any old layer, holds Shift or Ctrl, waits for the configured lead time, taps only that layer's base keys, then releases the modifier before natural or opposite-layer notes. Settings include hold-only calibration, `Shift+Z` and `Ctrl+C` tests, and a layer sequence calibration that plays natural, flat, natural, sharp, natural with the configured countdown so you have time to focus NTE. If HID posting does not switch the visible NTE layer on your setup, try the Session event tap or Frontmost app PID event target in Settings.
 
 | Degree | BAS | MID | TRE |
 | --- | --- | --- | --- |
@@ -99,7 +99,7 @@ The BAS base note is configurable. MID and TRE automatically follow at +12 and +
 - Track enable, mute, solo, and search.
 - 21-key and 36-key NTE mapping.
 - Multi-key approximation for accidentals and folded out-of-range notes.
-- Layer-aware Shift/Ctrl scheduling with configurable lead time, release delay, reuse window, event target, and calibration buttons.
+- Layer-segment Shift/Ctrl scheduling with configurable lead time, release delay, reuse window, layer switch gap, event target, and calibration buttons.
 - Transpose, octave shift, source/target key settings, and range diagnostics.
 - Dry-run mode that logs intended mappings such as `C# -> Z+X`.
 - CGEvent keyboard injection with Accessibility checks.

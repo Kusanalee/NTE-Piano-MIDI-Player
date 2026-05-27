@@ -243,6 +243,22 @@ final class AppViewModel: ObservableObject {
         sendCalibration(keys: calibrationKeys(semitones: [0, 2], exactModifiers: false), label: "Neighbor approximation calibration")
     }
 
+    func sendCalibrationLayerSequence() {
+        let settings = settingsStore.settings.clamped()
+        if !settings.dryRun, !AccessibilityPermission.isTrusted(prompt: true) {
+            statusMessage = "Accessibility permission is required for calibration key injection."
+            return
+        }
+        injector.dryRun = settings.dryRun
+        injector.clearDryRunLog()
+        statusMessage = "Layer sequence calibration started. Focus NTE before the countdown ends."
+
+        let events = calibrationLayerSequenceEvents(settings: settings)
+        let groups = EventTimelineBuilder.group(events: events, threshold: settings.chordThreshold)
+        let actions = LayeredPlaybackPlanner.plan(groups: groups, settings: settings)
+        runCalibrationActions(actions, settings: settings, label: "Layer sequence calibration")
+    }
+
     func holdCalibrationShift() {
         holdCalibration(modifier: .shift, label: "Hold Shift layer")
     }
@@ -334,6 +350,36 @@ final class AppViewModel: ObservableObject {
         }
         let groups = EventTimelineBuilder.group(events: events, threshold: settings.chordThreshold)
         return LayeredPlaybackPlanner.plan(groups: groups, settings: settings)
+    }
+
+    private func calibrationLayerSequenceEvents(settings: PlaybackSettings) -> [MappedNoteEvent] {
+        let specs: [(semitone: Int, exactModifiers: Bool, startTime: TimeInterval)] = [
+            (0, false, 0.00),
+            (3, true, 0.45),
+            (2, false, 0.90),
+            (1, true, 1.35),
+            (4, false, 1.80)
+        ]
+        return specs.compactMap { spec in
+            guard let key = calibrationKeys(semitones: [spec.semitone], exactModifiers: spec.exactModifiers).first else {
+                return nil
+            }
+            return MappedNoteEvent(
+                source: MidiNoteEvent(
+                    midiNote: UInt8(clamping: key.midiNote),
+                    velocity: 90,
+                    startTime: spec.startTime,
+                    duration: settings.tapDuration,
+                    channel: 0,
+                    trackIndex: 0
+                ),
+                adjustedMidiNote: key.midiNote,
+                pianoKeys: [key],
+                mappingKind: key.modifier == .none ? .exact : .modifierExact,
+                startTime: spec.startTime,
+                duration: settings.tapDuration
+            )
+        }
     }
 
     private func runCalibrationActions(_ actions: [ScheduledPlaybackAction], settings: PlaybackSettings, label: String) {

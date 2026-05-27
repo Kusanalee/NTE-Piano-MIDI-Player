@@ -21,6 +21,25 @@ final class EventSchedulerTests: XCTestCase {
         XCTAssertEqual(shiftUp - keyUp, settings.modifierReleaseDelay, accuracy: 0.000_001)
     }
 
+    func testFlatLayerStartsBeforeKeyDownAndReleasesAfterKeyUp() {
+        var settings = exactSettings(countdown: 1.0)
+        settings.modifierLeadTime = 0.120
+        settings.modifierReleaseDelay = 0.008
+        settings.tapDuration = 0.032
+
+        let actions = plannedActions(notes: [51], settings: settings)
+        let controlDown = firstModifierTime(actions, modifier: .control, keyDown: true)
+        let keyDown = firstKeyTime(actions, keyboardKey: .c, noteModifier: .control, keyDown: true)
+        let keyUp = firstKeyTime(actions, keyboardKey: .c, noteModifier: .control, keyDown: false)
+        let controlUp = firstModifierTime(actions, modifier: .control, keyDown: false)
+
+        XCTAssertEqual(controlDown, 0.880, accuracy: 0.000_001)
+        XCTAssertEqual(keyDown, 1.000, accuracy: 0.000_001)
+        XCTAssertEqual(keyDown - controlDown, settings.modifierLeadTime, accuracy: 0.000_001)
+        XCTAssertLessThan(keyUp, controlUp)
+        XCTAssertEqual(controlUp - keyUp, settings.modifierReleaseDelay, accuracy: 0.000_001)
+    }
+
     func testConsecutiveSharpNotesReuseHeldShiftInsideReuseWindow() {
         var settings = exactSettings(countdown: 0)
         settings.modifierLeadTime = 0.120
@@ -44,6 +63,53 @@ final class EventSchedulerTests: XCTestCase {
         XCTAssertEqual(shiftUps.count, 1)
         XCTAssertEqual(shiftDowns[0], 0.080, accuracy: 0.000_001)
         XCTAssertGreaterThan(shiftUps[0], secondKeyUp)
+    }
+
+    func testNaturalNoteBetweenAccidentalsForcesModifierReleaseBeforeNaturalKeyDown() {
+        var settings = exactSettings(countdown: 0)
+        settings.modifierLeadTime = 0.120
+        settings.modifierReleaseDelay = 0.008
+        settings.layerSwitchGap = 0.020
+        settings.tapDuration = 0.032
+
+        let actions = plannedActions(
+            noteSpecs: [
+                (49, 0.200),
+                (50, 0.215),
+                (54, 0.260)
+            ],
+            settings: settings
+        )
+
+        let firstShiftUp = modifierTimes(actions, modifier: .shift, keyDown: false)[0]
+        let naturalDown = firstKeyTime(actions, keyboardKey: .x, noteModifier: .none, keyDown: true)
+        let secondShiftDown = modifierTimes(actions, modifier: .shift, keyDown: true)[1]
+
+        XCTAssertEqual(naturalDown - firstShiftUp, settings.layerSwitchGap, accuracy: 0.000_001)
+        XCTAssertGreaterThanOrEqual(secondShiftDown - naturalDown, settings.tapDuration + settings.layerSwitchGap)
+    }
+
+    func testSharpToFlatTransitionReleasesOldModifierBeforeNewModifierDown() {
+        var settings = exactSettings(countdown: 0)
+        settings.modifierLeadTime = 0.120
+        settings.modifierReleaseDelay = 0.008
+        settings.layerSwitchGap = 0.020
+        settings.tapDuration = 0.032
+
+        let actions = plannedActions(
+            noteSpecs: [
+                (49, 0.200),
+                (51, 0.220)
+            ],
+            settings: settings
+        )
+
+        let shiftUp = firstModifierTime(actions, modifier: .shift, keyDown: false)
+        let controlDown = firstModifierTime(actions, modifier: .control, keyDown: true)
+        let flatKeyDown = firstKeyTime(actions, keyboardKey: .c, noteModifier: .control, keyDown: true)
+
+        XCTAssertEqual(controlDown - shiftUp, settings.layerSwitchGap, accuracy: 0.000_001)
+        XCTAssertEqual(flatKeyDown - controlDown, settings.modifierLeadTime, accuracy: 0.000_001)
     }
 
     func testMixedLayerChordSplitsInNaturalSharpFlatOrder() {
@@ -86,6 +152,34 @@ final class EventSchedulerTests: XCTestCase {
             return keyEventModifier
         }.first
         XCTAssertEqual(keyDownModifier, .shift)
+    }
+
+    func testCalibrationLayerSequenceOrdering() {
+        var settings = exactSettings(countdown: 1.0)
+        settings.modifierLeadTime = 0.120
+        settings.modifierReleaseDelay = 0.008
+        settings.layerSwitchGap = 0.020
+        settings.tapDuration = 0.032
+
+        let actions = plannedActions(
+            noteSpecs: [
+                (48, 0.00),
+                (51, 0.45),
+                (50, 0.90),
+                (49, 1.35),
+                (52, 1.80)
+            ],
+            settings: settings
+        )
+        let keyDowns = actions.compactMap { action -> PianoKey? in
+            guard case let .key(key, _, true) = action.kind else { return nil }
+            return key
+        }
+
+        XCTAssertEqual(keyDowns.map(\.modifier), [.none, .control, .none, .shift, .none])
+        XCTAssertEqual(keyDowns.map(\.keyboardKey), [.z, .c, .x, .z, .c])
+        XCTAssertLessThan(firstModifierTime(actions, modifier: .control, keyDown: false), firstKeyTime(actions, keyboardKey: .x, noteModifier: .none, keyDown: true))
+        XCTAssertLessThan(firstModifierTime(actions, modifier: .shift, keyDown: false), firstKeyTime(actions, keyboardKey: .c, noteModifier: .none, keyDown: true))
     }
 
     private func exactSettings(countdown: Double) -> PlaybackSettings {

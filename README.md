@@ -41,11 +41,19 @@ The app bundle is intentionally unsigned and not notarized in this release.
 If you download the ZIP from GitHub Releases:
 
 1. Unzip `NTE-Piano-MIDI-Player-macOS-unsigned.zip`.
-2. Move `NTE Piano MIDI Player.app` to Applications.
-3. Try opening the app once.
-4. If macOS blocks it, open System Settings > Privacy & Security.
-5. Click Open Anyway for `NTE Piano MIDI Player.app`, then confirm.
-6. After the app opens, grant Accessibility permission when you want real keyboard playback.
+2. Move `NTE Piano MIDI Player.app` to `/Applications`.
+3. If macOS says `"NTE Piano MIDI Player" is damaged and can’t be opened. You should move it to the Trash.`, remove the quarantine attribute in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/NTE Piano MIDI Player.app"
+open "/Applications/NTE Piano MIDI Player.app"
+```
+
+Only run this for a copy downloaded from the official GitHub Release or built locally from this source code. The command tells macOS to stop treating the app bundle as a quarantined internet download. If you keep the app somewhere other than `/Applications`, change the path in both commands.
+
+Some macOS versions may still show a Privacy & Security prompt with an Open Anyway button. If that appears after removing quarantine, approve it there.
+
+After the app opens, grant Accessibility permission when you want real keyboard playback.
 
 Dry-run playback, MIDI inspection, and sheet export work without Accessibility permission.
 
@@ -157,4 +165,4 @@ Using automation in online games may violate game rules or terms of service. Use
 - Live MIDI input is deferred from the MVP.
 - Playlist queue polish is deferred from the MVP.
 - The emergency stop shortcut is available while the app can receive keyboard commands; a full global hotkey can be added later if needed.
-- The release ZIP is unsigned and not notarized. Users must approve it manually in macOS Privacy & Security.
+- The release ZIP is unsigned and not notarized. Users may need to remove the quarantine attribute with Terminal as described above; some macOS versions may also require manual approval in Privacy & Security.

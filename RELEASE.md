@@ -8,15 +8,18 @@ Download `NTE-Piano-MIDI-Player-macOS-unsigned.zip` from the GitHub Release, unz
 
 ## Unsigned App Warning
 
-This app is not signed with an Apple Developer ID and is not notarized. On first launch, macOS Gatekeeper may block it.
+This app is not signed with an Apple Developer ID and is not notarized. On first launch, macOS may say `"NTE Piano MIDI Player" is damaged and can’t be opened. You should move it to the Trash.`
 
-To open it:
+To open it after moving the app to `/Applications`, run:
 
-1. Try opening the app once.
-2. Open System Settings > Privacy & Security.
-3. Scroll to the security warning for `NTE Piano MIDI Player.app`.
-4. Click Open Anyway.
-5. Confirm the prompt.
+```sh
+xattr -dr com.apple.quarantine "/Applications/NTE Piano MIDI Player.app"
+open "/Applications/NTE Piano MIDI Player.app"
+```
+
+Only run this for a copy downloaded from the official GitHub Release or built locally from this source code. The command tells macOS to stop treating the app bundle as a quarantined internet download. If you keep the app somewhere other than `/Applications`, change the path in both commands.
+
+Some macOS versions may still show a Privacy & Security prompt with an Open Anyway button. If that appears after removing quarantine, approve it there.
 
 After the app opens, enable Accessibility permission in System Settings > Privacy & Security > Accessibility so the app can send keyboard events to NTE. Dry-run and sheet export work without Accessibility permission.
 

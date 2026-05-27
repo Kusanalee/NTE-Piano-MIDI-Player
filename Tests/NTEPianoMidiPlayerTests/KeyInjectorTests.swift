@@ -11,17 +11,16 @@ final class KeyInjectorTests: XCTestCase {
             duration: 0,
             stagger: 0,
             modifierMode: .hardwareStateLeft,
-            modifierLeadTime: 0,
-            modifierReleaseDelay: 0
+            eventPostTarget: .hidEventTap
         )
 
         XCTAssertEqual(
             poster.events,
             [
-                .modifier(.shift, .left, true),
-                .key(.z, .none, true),
-                .key(.z, .none, false),
-                .modifier(.shift, .left, false)
+                .modifier(.shift, .left, true, .hidEventTap),
+                .key(.z, .none, true, .hidEventTap),
+                .key(.z, .none, false, .hidEventTap),
+                .modifier(.shift, .left, false, .hidEventTap)
             ]
         )
     }
@@ -35,17 +34,16 @@ final class KeyInjectorTests: XCTestCase {
             duration: 0,
             stagger: 0,
             modifierMode: .hybridLeft,
-            modifierLeadTime: 0,
-            modifierReleaseDelay: 0
+            eventPostTarget: .hidEventTap
         )
 
         XCTAssertEqual(
             poster.events,
             [
-                .modifier(.shift, .left, true),
-                .key(.z, .shift, true),
-                .key(.z, .shift, false),
-                .modifier(.shift, .left, false)
+                .modifier(.shift, .left, true, .hidEventTap),
+                .key(.z, .shift, true, .hidEventTap),
+                .key(.z, .shift, false, .hidEventTap),
+                .modifier(.shift, .left, false, .hidEventTap)
             ]
         )
     }
@@ -59,15 +57,14 @@ final class KeyInjectorTests: XCTestCase {
             duration: 0,
             stagger: 0,
             modifierMode: .flagsOnly,
-            modifierLeadTime: 0,
-            modifierReleaseDelay: 0
+            eventPostTarget: .sessionEventTap
         )
 
         XCTAssertEqual(
             poster.events,
             [
-                .key(.m, .control, true),
-                .key(.m, .control, false)
+                .key(.m, .control, true, .sessionEventTap),
+                .key(.m, .control, false, .sessionEventTap)
             ]
         )
     }
@@ -81,17 +78,37 @@ final class KeyInjectorTests: XCTestCase {
             duration: 0,
             stagger: 0,
             modifierMode: .hardwareStateRight,
-            modifierLeadTime: 0,
-            modifierReleaseDelay: 0
+            eventPostTarget: .frontmostPid
         )
 
         XCTAssertEqual(
             poster.events,
             [
-                .modifier(.control, .right, true),
-                .key(.m, .none, true),
-                .key(.m, .none, false),
-                .modifier(.control, .right, false)
+                .modifier(.control, .right, true, .frontmostPid),
+                .key(.m, .none, true, .frontmostPid),
+                .key(.m, .none, false, .frontmostPid),
+                .modifier(.control, .right, false, .frontmostPid)
+            ]
+        )
+    }
+
+    func testHoldModifierCalibrationEmitsOnlyModifierEvents() {
+        let poster = RecordingKeyEventPoster()
+        let injector = CGEventKeyInjector(dryRun: false, eventPoster: poster)
+
+        injector.holdModifier(
+            .shift,
+            mode: .hardwareStateLeft,
+            duration: 0,
+            eventPostTarget: .sessionEventTap,
+            dryRunDescription: nil
+        )
+
+        XCTAssertEqual(
+            poster.events,
+            [
+                .modifier(.shift, .left, true, .sessionEventTap),
+                .modifier(.shift, .left, false, .sessionEventTap)
             ]
         )
     }
@@ -107,8 +124,7 @@ final class KeyInjectorTests: XCTestCase {
             duration: 0.032,
             stagger: 0,
             modifierMode: .hardwareStateLeft,
-            modifierLeadTime: 0,
-            modifierReleaseDelay: 0
+            eventPostTarget: .hidEventTap
         )
 
         XCTAssertEqual(injector.dryRunLog, ["DRY Z, X duration=0.032"])
@@ -125,8 +141,7 @@ final class KeyInjectorTests: XCTestCase {
             duration: 0.032,
             stagger: 0,
             modifierMode: .hardwareStateLeft,
-            modifierLeadTime: 0,
-            modifierReleaseDelay: 0,
+            eventPostTarget: .hidEventTap,
             dryRunDescription: "C# -> Z+X"
         )
 
@@ -148,17 +163,17 @@ final class KeyInjectorTests: XCTestCase {
 
 private final class RecordingKeyEventPoster: KeyEventPosting {
     enum Event: Equatable {
-        case key(KeyboardKey, KeyModifier, Bool)
-        case modifier(KeyModifier, ModifierKeySide, Bool)
+        case key(KeyboardKey, KeyModifier, Bool, EventPostTarget)
+        case modifier(KeyModifier, ModifierKeySide, Bool, EventPostTarget)
     }
 
     var events: [Event] = []
 
-    func post(key: KeyboardKey, modifier: KeyModifier, keyDown: Bool) {
-        events.append(.key(key, modifier, keyDown))
+    func post(key: KeyboardKey, modifier: KeyModifier, keyDown: Bool, target: EventPostTarget) {
+        events.append(.key(key, modifier, keyDown, target))
     }
 
-    func post(modifier: KeyModifier, side: ModifierKeySide, keyDown: Bool) {
-        events.append(.modifier(modifier, side, keyDown))
+    func post(modifier: KeyModifier, side: ModifierKeySide, keyDown: Bool, target: EventPostTarget) {
+        events.append(.modifier(modifier, side, keyDown, target))
     }
 }

@@ -134,6 +134,22 @@ public enum ModifierInjectionMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+public enum EventPostTarget: String, Codable, CaseIterable, Identifiable {
+    case hidEventTap
+    case sessionEventTap
+    case frontmostPid
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .hidEventTap: "HID event tap"
+        case .sessionEventTap: "Session event tap"
+        case .frontmostPid: "Frontmost app PID"
+        }
+    }
+}
+
 public struct PlaybackSettings: Codable, Equatable {
     public static let defaultAcceptedForegroundAppNames = ["NTE.app", "NTE", "Neverness to Everness"]
 
@@ -166,6 +182,8 @@ public struct PlaybackSettings: Codable, Equatable {
     public var modifierInjectionMode: ModifierInjectionMode
     public var modifierLeadTime: Double
     public var modifierReleaseDelay: Double
+    public var modifierReuseWindow: Double
+    public var eventPostTarget: EventPostTarget
 
     private enum CodingKeys: String, CodingKey {
         case layoutMode
@@ -197,6 +215,8 @@ public struct PlaybackSettings: Codable, Equatable {
         case modifierInjectionMode
         case modifierLeadTime
         case modifierReleaseDelay
+        case modifierReuseWindow
+        case eventPostTarget
     }
 
     public init(
@@ -227,8 +247,10 @@ public struct PlaybackSettings: Codable, Equatable {
         accidentalPlaybackMode: AccidentalPlaybackMode = .approximateWithNeighbors,
         maxApproximationKeys: Int = 2,
         modifierInjectionMode: ModifierInjectionMode = .hardwareStateLeft,
-        modifierLeadTime: Double = 0.035,
-        modifierReleaseDelay: Double = 0.008
+        modifierLeadTime: Double = 0.120,
+        modifierReleaseDelay: Double = 0.008,
+        modifierReuseWindow: Double = 0.120,
+        eventPostTarget: EventPostTarget = .hidEventTap
     ) {
         self.layoutMode = layoutMode
         self.baseMidiNoteForBAS1 = baseMidiNoteForBAS1
@@ -259,6 +281,8 @@ public struct PlaybackSettings: Codable, Equatable {
         self.modifierInjectionMode = modifierInjectionMode
         self.modifierLeadTime = modifierLeadTime
         self.modifierReleaseDelay = modifierReleaseDelay
+        self.modifierReuseWindow = modifierReuseWindow
+        self.eventPostTarget = eventPostTarget
     }
 
     public init(from decoder: Decoder) throws {
@@ -293,7 +317,9 @@ public struct PlaybackSettings: Codable, Equatable {
             maxApproximationKeys: try container.decodeIfPresent(Int.self, forKey: .maxApproximationKeys) ?? fallback.maxApproximationKeys,
             modifierInjectionMode: try container.decodeIfPresent(ModifierInjectionMode.self, forKey: .modifierInjectionMode) ?? fallback.modifierInjectionMode,
             modifierLeadTime: try container.decodeIfPresent(Double.self, forKey: .modifierLeadTime) ?? fallback.modifierLeadTime,
-            modifierReleaseDelay: try container.decodeIfPresent(Double.self, forKey: .modifierReleaseDelay) ?? fallback.modifierReleaseDelay
+            modifierReleaseDelay: try container.decodeIfPresent(Double.self, forKey: .modifierReleaseDelay) ?? fallback.modifierReleaseDelay,
+            modifierReuseWindow: try container.decodeIfPresent(Double.self, forKey: .modifierReuseWindow) ?? fallback.modifierReuseWindow,
+            eventPostTarget: try container.decodeIfPresent(EventPostTarget.self, forKey: .eventPostTarget) ?? fallback.eventPostTarget
         )
     }
 
@@ -328,6 +354,8 @@ public struct PlaybackSettings: Codable, Equatable {
         try container.encode(modifierInjectionMode, forKey: .modifierInjectionMode)
         try container.encode(modifierLeadTime, forKey: .modifierLeadTime)
         try container.encode(modifierReleaseDelay, forKey: .modifierReleaseDelay)
+        try container.encode(modifierReuseWindow, forKey: .modifierReuseWindow)
+        try container.encode(eventPostTarget, forKey: .eventPostTarget)
     }
 
     public var midiNoteForMID1: Int { baseMidiNoteForBAS1 + 12 }
@@ -356,8 +384,9 @@ public struct PlaybackSettings: Codable, Equatable {
         copy.mergeThreshold = min(max(copy.mergeThreshold, 0), 0.100)
         copy.simultaneousKeyLimit = min(max(copy.simultaneousKeyLimit, 1), 12)
         copy.maxApproximationKeys = min(max(copy.maxApproximationKeys, 1), 3)
-        copy.modifierLeadTime = min(max(copy.modifierLeadTime, 0), 0.150)
+        copy.modifierLeadTime = min(max(copy.modifierLeadTime, 0), 0.500)
         copy.modifierReleaseDelay = min(max(copy.modifierReleaseDelay, 0), 0.100)
+        copy.modifierReuseWindow = min(max(copy.modifierReuseWindow, 0), 1.000)
         copy.acceptedForegroundAppNames = copy.acceptedForegroundAppNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }

@@ -2,7 +2,7 @@ import AppKit
 import AVFoundation
 import Combine
 import Foundation
-import NTEPianoMidiPlayerCore
+@preconcurrency import NTEPianoMidiPlayerCore
 import UniformTypeIdentifiers
 
 @MainActor
@@ -243,6 +243,14 @@ final class AppViewModel: ObservableObject {
         sendCalibration(keys: calibrationKeys(semitones: [0, 2], exactModifiers: false), label: "Neighbor approximation calibration")
     }
 
+    func holdCalibrationShift() {
+        holdCalibration(modifier: .shift, label: "Hold Shift layer")
+    }
+
+    func holdCalibrationControl() {
+        holdCalibration(modifier: .control, label: "Hold Ctrl layer")
+    }
+
     func formatTime(_ time: TimeInterval) -> String {
         guard time.isFinite else { return "0:00" }
         let totalSeconds = max(0, Int(time.rounded()))
@@ -272,17 +280,95 @@ final class AppViewModel: ObservableObject {
         }
         injector.dryRun = settings.dryRun
         injector.clearDryRunLog()
-        injector.tapChord(
-            keys,
-            duration: settings.tapDuration,
-            stagger: settings.chordStagger,
-            modifierMode: settings.modifierInjectionMode,
-            modifierLeadTime: settings.modifierLeadTime,
-            modifierReleaseDelay: settings.modifierReleaseDelay,
-            dryRunDescription: label
-        )
-        dryRunLogText = injector.dryRunLog.joined(separator: "\n")
-        statusMessage = "\(label) sent."
+        statusMessage = "\(label) started. Focus NTE before the countdown ends."
+
+        let actions = calibrationActions(for: keys, settings: settings)
+        runCalibrationActions(actions, settings: settings, label: label)
+    }
+
+    private func holdCalibration(modifier: KeyModifier, label: String) {
+        let settings = settingsStore.settings.clamped()
+        if !settings.dryRun, !AccessibilityPermission.isTrusted(prompt: true) {
+            statusMessage = "Accessibility permission is required for calibration key injection."
+            return
+        }
+        injector.dryRun = settings.dryRun
+        injector.clearDryRunLog()
+        statusMessage = "\(label) started. Focus NTE before the countdown ends."
+
+        let injector = self.injector
+        DispatchQueue.global(qos: .userInitiated).async {
+            Self.sleep(until: settings.countdownDuration, startNanos: DispatchTime.now().uptimeNanoseconds)
+            injector.holdModifier(
+                modifier,
+                mode: settings.modifierInjectionMode,
+                duration: 2.0,
+                eventPostTarget: settings.eventPostTarget,
+                dryRunDescription: "\(label) using \(settings.eventPostTarget.displayName)"
+            )
+            let logText = injector.dryRunLog.joined(separator: "\n")
+            DispatchQueue.main.async { [weak self] in
+                self?.dryRunLogText = logText
+                self?.statusMessage = "\(label) completed."
+            }
+        }
+    }
+
+    private func calibrationActions(for keys: [PianoKey], settings: PlaybackSettings) -> [ScheduledPlaybackAction] {
+        let events = keys.map { key in
+            MappedNoteEvent(
+                source: MidiNoteEvent(
+                    midiNote: UInt8(clamping: key.midiNote),
+                    velocity: 90,
+                    startTime: 0,
+                    duration: settings.tapDuration,
+                    channel: 0,
+                    trackIndex: 0
+                ),
+                adjustedMidiNote: key.midiNote,
+                pianoKeys: [key],
+                mappingKind: key.modifier == .none ? .exact : .modifierExact,
+                startTime: 0,
+                duration: settings.tapDuration
+            )
+        }
+        let groups = EventTimelineBuilder.group(events: events, threshold: settings.chordThreshold)
+        return LayeredPlaybackPlanner.plan(groups: groups, settings: settings)
+    }
+
+    private func runCalibrationActions(_ actions: [ScheduledPlaybackAction], settings: PlaybackSettings, label: String) {
+        let injector = self.injector
+        DispatchQueue.global(qos: .userInitiated).async {
+            let startNanos = DispatchTime.now().uptimeNanoseconds
+            for action in actions {
+                Self.sleep(until: action.time, startNanos: startNanos)
+                switch action.kind {
+                case let .key(key, keyEventModifier, keyDown):
+                    injector.setKey(
+                        key,
+                        keyEventModifier: keyEventModifier,
+                        keyDown: keyDown,
+                        eventPostTarget: settings.eventPostTarget
+                    )
+                case let .modifier(modifier, side, keyDown):
+                    injector.setModifier(
+                        modifier,
+                        side: side,
+                        keyDown: keyDown,
+                        eventPostTarget: settings.eventPostTarget
+                    )
+                case let .dryRun(entry):
+                    injector.recordDryRun("\(entry) via \(settings.eventPostTarget.displayName)")
+                case .progress:
+                    break
+                }
+            }
+            let logText = injector.dryRunLog.joined(separator: "\n")
+            DispatchQueue.main.async { [weak self] in
+                self?.dryRunLogText = logText
+                self?.statusMessage = "\(label) sent using \(settings.eventPostTarget.displayName)."
+            }
+        }
     }
 
     private func calibrationKeys(semitones: [Int], exactModifiers: Bool) -> [PianoKey] {
@@ -330,6 +416,17 @@ final class AppViewModel: ObservableObject {
         case .lostFocus:
             playbackState = .lostFocus
             statusMessage = "Playback stopped because NTE is no longer frontmost."
+        }
+    }
+
+    nonisolated private static func sleep(until targetSeconds: TimeInterval, startNanos: UInt64) {
+        let targetOffset = UInt64(max(0, targetSeconds) * 1_000_000_000)
+        while true {
+            let target = startNanos + targetOffset
+            let now = DispatchTime.now().uptimeNanoseconds
+            if now >= target { return }
+            let remaining = TimeInterval(target - now) / 1_000_000_000
+            Thread.sleep(forTimeInterval: min(max(remaining, 0.001), 0.005))
         }
     }
 }

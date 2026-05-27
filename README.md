@@ -68,6 +68,8 @@ By default, accidentals are approximated with neighboring natural keys so more M
 
 This mode can map all 12 semitones per octave. Because NTE may not reliably honor synthetic Shift/Ctrl events on every Mac/game setup, the default is neighbor approximation for accidentals. You can switch accidentals back to exact Shift/Ctrl mappings in Settings.
 
+When exact Shift/Ctrl mode is enabled, the scheduler treats Shift and Ctrl as held NTE piano layers: it presses the modifier before the note, waits for the configured lead time, taps the base key, then releases the modifier after key-up. Settings include calibration buttons to hold only Shift or Ctrl for two seconds, plus test notes for `Shift+Z` and `Ctrl+C`; these calibration actions use the configured countdown so you have time to focus NTE. If HID posting does not switch the visible NTE layer on your setup, try the Session event tap or Frontmost app PID event target in Settings.
+
 | Degree | BAS | MID | TRE |
 | --- | --- | --- | --- |
 | 1 / C | Z | A | Q |
@@ -97,11 +99,11 @@ The BAS base note is configurable. MID and TRE automatically follow at +12 and +
 - Track enable, mute, solo, and search.
 - 21-key and 36-key NTE mapping.
 - Multi-key approximation for accidentals and folded out-of-range notes.
-- Configurable Shift/Ctrl injection strategies with calibration buttons.
+- Layer-aware Shift/Ctrl scheduling with configurable lead time, release delay, reuse window, event target, and calibration buttons.
 - Transpose, octave shift, source/target key settings, and range diagnostics.
 - Dry-run mode that logs intended mappings such as `C# -> Z+X`.
 - CGEvent keyboard injection with Accessibility checks.
-- Foreground-app safety check before each note group.
+- Foreground-app safety check before synthetic key/modifier events.
 - Manual keyboard remapping in Settings.
 - Pause, resume, stop, seek/progress, tempo multiplier, and countdown.
 - AVMIDIPlayer speaker preview separate from key injection.

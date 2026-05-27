@@ -96,8 +96,18 @@ struct SettingsView: View {
                             Text(mode.displayName).tag(mode)
                         }
                     }
-                    labeledSlider("Modifier lead", value: binding(\.modifierLeadTime), range: 0...0.150, suffix: "s")
+                    Picker("Event target", selection: binding(\.eventPostTarget)) {
+                        ForEach(EventPostTarget.allCases) { target in
+                            Text(target.displayName).tag(target)
+                        }
+                    }
+                    labeledSlider("Modifier lead", value: binding(\.modifierLeadTime), range: 0...0.500, suffix: "s")
                     labeledSlider("Release delay", value: binding(\.modifierReleaseDelay), range: 0...0.100, suffix: "s")
+                    labeledSlider("Reuse window", value: binding(\.modifierReuseWindow), range: 0...1.000, suffix: "s")
+                    HStack {
+                        Button("Hold Shift", action: viewModel.holdCalibrationShift)
+                        Button("Hold Ctrl", action: viewModel.holdCalibrationControl)
+                    }
                     HStack {
                         Button("Natural", action: viewModel.sendCalibrationNatural)
                         Button("Shift sharp", action: viewModel.sendCalibrationSharp)

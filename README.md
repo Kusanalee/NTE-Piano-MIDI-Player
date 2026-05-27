@@ -21,6 +21,34 @@ swift run NTEPianoMidiPlayer
 
 If `xcodebuild` reports that only Command Line Tools are selected, install/select full Xcode before using Xcode-specific workflows.
 
+## Build the macOS App
+
+To create an unsigned `.app` bundle and ZIP for GitHub Releases:
+
+```sh
+scripts/build_app.sh
+```
+
+The script writes:
+
+- `dist/NTE Piano MIDI Player.app`
+- `dist/NTE-Piano-MIDI-Player-macOS-unsigned.zip`
+
+The app bundle is intentionally unsigned and not notarized in this release.
+
+## Download Unsigned App
+
+If you download the ZIP from GitHub Releases:
+
+1. Unzip `NTE-Piano-MIDI-Player-macOS-unsigned.zip`.
+2. Move `NTE Piano MIDI Player.app` to Applications.
+3. Try opening the app once.
+4. If macOS blocks it, open System Settings > Privacy & Security.
+5. Click Open Anyway for `NTE Piano MIDI Player.app`, then confirm.
+6. After the app opens, grant Accessibility permission when you want real keyboard playback.
+
+Dry-run playback, MIDI inspection, and sheet export work without Accessibility permission.
+
 ## Accessibility Permission
 
 The app sends keyboard events with Quartz/CoreGraphics `CGEvent`. macOS blocks this unless the app is trusted for Accessibility.
@@ -122,4 +150,4 @@ Using automation in online games may violate game rules or terms of service. Use
 - Live MIDI input is deferred from the MVP.
 - Playlist queue polish is deferred from the MVP.
 - The emergency stop shortcut is available while the app can receive keyboard commands; a full global hotkey can be added later if needed.
-- The SwiftPM executable is convenient for development; a polished distributable `.app` bundle should be produced with Xcode once full Xcode is installed and selected.
+- The release ZIP is unsigned and not notarized. Users must approve it manually in macOS Privacy & Security.

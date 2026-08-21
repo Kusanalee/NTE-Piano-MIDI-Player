@@ -1,38 +1,60 @@
-# NTE Piano MIDI Player v0.1.0
+# Release and packaging notes
 
-This release contains an unsigned macOS app bundle for the NTE in-game piano MIDI auto-player.
+NTE Piano MIDI Player is distributed as an unsigned macOS app bundle for the NTE in-game piano. This document is a maintainer checklist; preparing or publishing a new release still requires an explicit version/release task.
 
-## Download
+## Build and test
 
-Download `NTE-Piano-MIDI-Player-macOS-unsigned.zip` from the GitHub Release, unzip it, and move `NTE Piano MIDI Player.app` to Applications.
+Run the shared Xcode scheme on macOS:
 
-## Unsigned App Warning
+```sh
+xcodebuild \
+  -project NTEPianoMidiPlayer.xcodeproj \
+  -scheme NTEPianoMidiPlayer \
+  -destination 'platform=macOS' \
+  test
 
-This app is not signed with an Apple Developer ID and is not notarized. On first launch, macOS may say `"NTE Piano MIDI Player" is damaged and can’t be opened. You should move it to the Trash.`
+xcodebuild \
+  -project NTEPianoMidiPlayer.xcodeproj \
+  -scheme NTEPianoMidiPlayer \
+  -configuration Release \
+  -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO \
+  build
 
-To open it after moving the app to `/Applications`, run:
+scripts/build_app.sh
+git diff --check
+```
+
+The packaging script produces:
+
+- `dist/NTE Piano MIDI Player.app`
+- `dist/NTE-Piano-MIDI-Player-macOS-unsigned.zip`
+
+It also verifies that the pinned Karabiner submodule is initialized, the bundled `Contents/Helpers/NTEVirtualHIDBridge` passes its protocol self-test, and the bridge contains arm64 and x86_64 slices.
+
+## QA checklist
+
+1. Confirm Automatic arrangement, Preview Mode, and Listen/Speaker Playback on representative format-0 and multi-track format-1 MIDI files.
+2. Confirm 21-key input uses exactly `QWERTYU`, `ASDFGHJ`, and `ZXCVBNM` without modifiers.
+3. Install and activate Karabiner DriverKit VirtualHIDDevice 8.2.0, start its daemon, then start the bundled root bridge for the signed-in UID.
+4. Confirm Settings reports VirtualHID Ready; verify the natural, Shift, and Ctrl layers, compatible simultaneous chords, and a slow exact cross-layer roll in 36-key mode.
+5. Confirm a rapid cross-layer passage omits lower-priority tones without semitone changes, then verify the layer calibration visibly performs natural → Flat → natural → Sharp → natural and releases modifiers correctly.
+6. Confirm Original arrangement remains available for diagnostic comparison.
+7. Confirm stop, focus loss, app quit, bridge disconnect, and heartbeat timeout release every held letter key and modifier.
+8. Replay a known-good 21-key MIDI and confirm its Quartz behavior is unchanged.
+9. Launch the packaged app and verify its generated Info.plist, app icon, embedded core framework, universal bridge, and macOS 13 deployment target.
+
+## Unsigned app warning
+
+The app is not signed with an Apple Developer ID and is not notarized. After moving it to `/Applications`, macOS may require:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/NTE Piano MIDI Player.app"
 open "/Applications/NTE Piano MIDI Player.app"
 ```
 
-Only run this for a copy downloaded from the official GitHub Release or built locally from this source code. The command tells macOS to stop treating the app bundle as a quarantined internet download. If you keep the app somewhere other than `/Applications`, change the path in both commands.
+Only remove quarantine from an official release or a locally reviewed build. Some macOS versions may also require Open Anyway in Privacy & Security. Accessibility permission is needed for 21-key live injection and the event recorder, while 36-key live injection uses the separately approved VirtualHID system extension. Preview Mode, speaker playback, inspection, and export work without either live backend.
 
-Some macOS versions may still show a Privacy & Security prompt with an Open Anyway button. If that appears after removing quarantine, approve it there.
+## Scope and safety
 
-After the app opens, enable Accessibility permission in System Settings > Privacy & Security > Accessibility so the app can send keyboard events to NTE. Dry-run and sheet export work without Accessibility permission.
-
-## Notes
-
-- This release targets macOS 13 or newer.
-- The default accidental mode uses neighbor approximation. Use Settings to test exact Shift/Ctrl mode.
-- The app does not read process memory, bypass anti-cheat, or run stealth automation.
-- Using automation in online games may violate game rules or terms of service. Use at your own risk.
-
-## Maintainer Checklist
-
-1. Run `swift test`.
-2. Run `scripts/build_app.sh`.
-3. Verify `dist/NTE Piano MIDI Player.app` launches.
-4. Upload `dist/NTE-Piano-MIDI-Player-macOS-unsigned.zip` to the GitHub Release.
+Automatic arrangement is a deterministic best-effort reduction for NTE's physical keyboard. Automatic 36-key playback rolls cross-layer chords exactly only when the timing budget permits and otherwise omits lower-priority tones without semitone substitution. It cannot reproduce unsupported dynamics, pitch bend, or arbitrary ranges. The app does not read process memory or bypass anti-cheat. Using automation in an online game may violate its rules or terms of service.

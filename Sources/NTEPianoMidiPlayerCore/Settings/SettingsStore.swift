@@ -11,14 +11,15 @@ public final class SettingsStore: ObservableObject {
     }
 
     private let defaults: UserDefaults
-    private let settingsKey = "NTEPianoMidiPlayer.settings.v1"
+    private static let settingsKey = "NTEPianoMidiPlayer.settings.v2"
+    private static let legacySettingsKey = "NTEPianoMidiPlayer.settings.v1"
     private let recentFilesKey = "NTEPianoMidiPlayer.recentFiles.v1"
 
     public var settingsPublisher: Published<PlaybackSettings>.Publisher { $settings }
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.settings = Self.loadSettings(defaults: defaults, key: settingsKey)
+        self.settings = Self.loadSettings(defaults: defaults)
         self.recentFiles = Self.loadRecentFiles(defaults: defaults, key: recentFilesKey)
     }
 
@@ -34,7 +35,7 @@ public final class SettingsStore: ObservableObject {
 
     private func save() {
         let encoded = try? JSONEncoder().encode(settings.clamped())
-        defaults.set(encoded, forKey: settingsKey)
+        defaults.set(encoded, forKey: Self.settingsKey)
     }
 
     private func saveRecentFiles() {
@@ -42,12 +43,25 @@ public final class SettingsStore: ObservableObject {
         defaults.set(paths, forKey: recentFilesKey)
     }
 
-    private static func loadSettings(defaults: UserDefaults, key: String) -> PlaybackSettings {
-        guard let data = defaults.data(forKey: key),
-              let decoded = try? JSONDecoder().decode(PlaybackSettings.self, from: data) else {
-            return PlaybackSettings()
+    private static func loadSettings(defaults: UserDefaults) -> PlaybackSettings {
+        if let current = decodeSettings(defaults.data(forKey: settingsKey)) {
+            return current.clamped()
         }
-        return decoded.clamped()
+
+        var migrated = decodeSettings(defaults.data(forKey: legacySettingsKey)) ?? PlaybackSettings()
+        if migrated.modifierInjectionMode == .hardwareStateLeft {
+            migrated.modifierInjectionMode = .hybridLeft
+        }
+        migrated = migrated.clamped()
+        if let encoded = try? JSONEncoder().encode(migrated) {
+            defaults.set(encoded, forKey: settingsKey)
+        }
+        return migrated
+    }
+
+    private static func decodeSettings(_ data: Data?) -> PlaybackSettings? {
+        guard let data else { return nil }
+        return try? JSONDecoder().decode(PlaybackSettings.self, from: data)
     }
 
     private static func loadRecentFiles(defaults: UserDefaults, key: String) -> [URL] {

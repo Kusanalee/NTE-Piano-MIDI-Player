@@ -25,6 +25,11 @@ struct SettingsView: View {
                             Text(mode.displayName).tag(mode)
                         }
                     }
+                    Picker("Arrangement", selection: binding(\.arrangementMode)) {
+                        ForEach(ArrangementMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
                     Stepper("Base MIDI note for BAS 1: \(settingsStore.settings.baseMidiNoteForBAS1)", value: binding(\.baseMidiNoteForBAS1), in: 0...92)
                     Text("MID 1: \(settingsStore.settings.midiNoteForMID1), TRE 1: \(settingsStore.settings.midiNoteForTRE1)")
                         .font(.caption)
@@ -67,20 +72,42 @@ struct SettingsView: View {
                     Toggle("Hold sustained notes", isOn: binding(\.holdSustainedNotes))
                     labeledSlider("Max hold", value: binding(\.maxHoldDuration), range: 0.050...10.0, suffix: "s")
                     Stepper("Simultaneous key limit: \(settingsStore.settings.simultaneousKeyLimit)", value: binding(\.simultaneousKeyLimit), in: 1...12)
+                    if settingsStore.settings.layoutMode == .nte36Chromatic,
+                       settingsStore.settings.simultaneousKeyLimit > VirtualHIDConstants.maximumKeys {
+                        Text("36-key VirtualHID playback uses an effective limit of \(VirtualHIDConstants.maximumKeys). The higher preference remains available for 21-key playback.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
-                Section("Multi-Key Approximation") {
-                    Toggle("Enable multi-key approximation", isOn: binding(\.multiKeyApproximationEnabled))
-                    Picker("Accidentals", selection: binding(\.accidentalPlaybackMode)) {
-                        ForEach(AccidentalPlaybackMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode)
-                        }
+                Section("36-Key VirtualHID") {
+                    Label(
+                        viewModel.virtualHIDStatus.title,
+                        systemImage: viewModel.virtualHIDStatus.isReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(viewModel.virtualHIDStatus.isReady ? .green : .orange)
+                    Text(viewModel.virtualHIDStatus.guidance)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Pinned dependency: Karabiner DriverKit VirtualHIDDevice 8.2.0, driver 1.8.0, protocol 7.")
+                        .font(.caption)
+                    HStack {
+                        Button("Refresh Status", action: viewModel.refreshVirtualHIDStatus)
+                        Button("Open Official Release", action: viewModel.openVirtualHIDReleasePage)
+                        Button("Copy Setup Commands", action: viewModel.copyVirtualHIDSetupCommands)
                     }
-                    Stepper("Max approximation keys: \(settingsStore.settings.maxApproximationKeys)", value: binding(\.maxApproximationKeys), in: 1...3)
+                    ScrollView(.horizontal) {
+                        Text(viewModel.virtualHIDSetupCommands)
+                            .font(.system(.caption2, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(6)
+                    }
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
 
                 Section("Safety") {
-                    Toggle("Dry-run mode", isOn: binding(\.dryRun))
+                    Toggle("Start in Preview Mode", isOn: binding(\.startInPreviewMode))
                     Picker("Emergency stop", selection: binding(\.emergencyStopHotkey)) {
                         ForEach(EmergencyStopHotkey.allCases) { hotkey in
                             Text(hotkey.displayName).tag(hotkey)
@@ -90,7 +117,7 @@ struct SettingsView: View {
                     Button("Open Accessibility Settings", action: viewModel.openAccessibilitySettings)
                 }
 
-                Section("Modifier Calibration") {
+                Section("Quartz Modifier Diagnostics") {
                     Picker("Modifier mode", selection: binding(\.modifierInjectionMode)) {
                         ForEach(ModifierInjectionMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
@@ -105,6 +132,9 @@ struct SettingsView: View {
                     labeledSlider("Release delay", value: binding(\.modifierReleaseDelay), range: 0...0.100, suffix: "s")
                     labeledSlider("Reuse window", value: binding(\.modifierReuseWindow), range: 0...1.000, suffix: "s")
                     labeledSlider("Layer switch gap", value: binding(\.layerSwitchGap), range: 0...0.250, suffix: "s")
+                    Text("36-key live playback and calibration use VirtualHID regardless of these saved Quartz alternatives. In 21-key mode, these controls remain available for diagnostic comparisons.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Text("Calibration uses the countdown. Focus NTE and watch the piano layer before each note lands.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -116,7 +146,6 @@ struct SettingsView: View {
                         Button("Natural", action: viewModel.sendCalibrationNatural)
                         Button("Shift sharp", action: viewModel.sendCalibrationSharp)
                         Button("Ctrl flat", action: viewModel.sendCalibrationFlat)
-                        Button("Neighbor pair", action: viewModel.sendCalibrationApproximation)
                         Button("Layer sequence", action: viewModel.sendCalibrationLayerSequence)
                     }
                 }
@@ -168,6 +197,7 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .padding()
         }
+        .onAppear(perform: viewModel.refreshVirtualHIDStatus)
     }
 
     private var acceptedAppNamesBinding: Binding<String> {

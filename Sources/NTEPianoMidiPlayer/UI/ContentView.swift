@@ -21,7 +21,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $viewModel.showingSettings) {
             SettingsView(settingsStore: viewModel.settingsStore, viewModel: viewModel)
-                .frame(width: 520, height: 640)
+                .frame(width: 620, height: 720)
         }
         .sheet(isPresented: $viewModel.showingSheetExporter) {
             SheetExporterView(viewModel: viewModel)
@@ -83,16 +83,16 @@ private struct PlaybackToolbarView: View {
 
             regularLayoutPicker
 
-            Toggle("Dry-run", isOn: settingsBinding(\.dryRun))
+            Toggle("Preview Mode", isOn: $viewModel.isPreviewMode)
                 .toggleStyle(.checkbox)
-                .help("Log intended key events without sending CGEvents")
+                .help("Run the complete arrangement without sending keyboard events")
                 .fixedSize(horizontal: true, vertical: false)
 
-            Button(action: viewModel.togglePreviewPlayback) {
-                Label("Preview", systemImage: "speaker.wave.2")
+            Button(action: viewModel.toggleSpeakerPlayback) {
+                Label("Listen", systemImage: "speaker.wave.2")
             }
             .disabled(viewModel.document == nil)
-            .help("Preview the MIDI through AVMIDIPlayer")
+            .help("Listen to the original MIDI through AVMIDIPlayer")
             .fixedSize(horizontal: true, vertical: false)
 
             Button(action: { viewModel.showingSheetExporter = true }) {
@@ -149,12 +149,12 @@ private struct PlaybackToolbarView: View {
             Menu {
                 layoutPicker
 
-                Toggle("Dry-run", isOn: settingsBinding(\.dryRun))
+                Toggle("Preview Mode", isOn: $viewModel.isPreviewMode)
 
                 Divider()
 
-                Button(action: viewModel.togglePreviewPlayback) {
-                    Label("Preview", systemImage: "speaker.wave.2")
+                Button(action: viewModel.toggleSpeakerPlayback) {
+                    Label("Listen", systemImage: "speaker.wave.2")
                 }
                 .disabled(viewModel.document == nil)
 
@@ -269,8 +269,8 @@ private struct WorkspaceView: View {
         VStack(spacing: 12) {
             ProgressStripView(viewModel: viewModel)
             KeyboardPreviewView(settings: viewModel.settingsStore.settings)
-            DiagnosticsView(diagnostics: viewModel.diagnostics)
-            DryRunLogView(logText: viewModel.dryRunLogText)
+            DiagnosticsView(viewModel: viewModel)
+            PreviewLogView(logText: viewModel.previewLogText)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -388,20 +388,20 @@ private struct ProgressStripView: View {
     }
 }
 
-private struct DryRunLogView: View {
+private struct PreviewLogView: View {
     let logText: String
 
     var body: some View {
         GroupBox {
             ScrollView {
-                Text(logText.isEmpty ? "Dry-run events will appear here after playback." : logText)
+                Text(logText.isEmpty ? "Preview events will appear here after playback." : logText)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(logText.isEmpty ? .secondary : .primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
         } label: {
-            Label("Dry-run Log", systemImage: "terminal")
+            Label("Preview Log", systemImage: "terminal")
         }
         .frame(minHeight: 110)
     }

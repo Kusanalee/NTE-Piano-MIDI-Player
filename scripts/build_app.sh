@@ -3,74 +3,64 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="NTE Piano MIDI Player"
-EXECUTABLE_NAME="NTEPianoMidiPlayer"
-BUNDLE_ID="dev.enka.NTEPianoMidiPlayer"
-VERSION="${VERSION:-0.1.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-1}"
+PROJECT_PATH="$ROOT_DIR/NTEPianoMidiPlayer.xcodeproj"
+SCHEME="NTEPianoMidiPlayer"
+VERSION="${VERSION:-0.1.1}"
+BUILD_NUMBER="${BUILD_NUMBER:-2}"
 
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
-CONTENTS_DIR="$APP_DIR/Contents"
-MACOS_DIR="$CONTENTS_DIR/MacOS"
-RESOURCES_DIR="$CONTENTS_DIR/Resources"
-ICONSET_DIR="$DIST_DIR/AppIcon.iconset"
+DERIVED_DATA_DIR="$ROOT_DIR/DerivedData/Release"
+BUILT_APP="$DERIVED_DATA_DIR/Build/Products/Release/$APP_NAME.app"
+RESOURCES_DIR="$APP_DIR/Contents/Resources"
+VIRTUAL_HID_VENDOR_DIR="$ROOT_DIR/Vendor/Karabiner-DriverKit-VirtualHIDDevice"
+VIRTUAL_HID_VERSION_FILE="$VIRTUAL_HID_VENDOR_DIR/version.json"
+VIRTUAL_HID_HELPER="$APP_DIR/Contents/Helpers/NTEVirtualHIDBridge"
 ZIP_PATH="$DIST_DIR/NTE-Piano-MIDI-Player-macOS-unsigned.zip"
 
-echo "Building release executable..."
-swift build -c release --package-path "$ROOT_DIR"
-BIN_DIR="$(swift build -c release --package-path "$ROOT_DIR" --show-bin-path)"
+if [[ ! -f "$VIRTUAL_HID_VERSION_FILE" ]]; then
+    echo "Karabiner VirtualHID submodule is missing. Run: git submodule update --init --recursive" >&2
+    exit 1
+fi
 
-rm -rf "$APP_DIR" "$ICONSET_DIR" "$ZIP_PATH"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+if ! /usr/bin/grep -q '"package_version": "8.2.0"' "$VIRTUAL_HID_VERSION_FILE"; then
+    echo "Karabiner VirtualHID must be pinned to package version 8.2.0." >&2
+    exit 1
+fi
 
-cp "$BIN_DIR/$EXECUTABLE_NAME" "$MACOS_DIR/$EXECUTABLE_NAME"
-chmod 755 "$MACOS_DIR/$EXECUTABLE_NAME"
+echo "Building the native Xcode Release app..."
+xcodebuild \
+    -project "$PROJECT_PATH" \
+    -scheme "$SCHEME" \
+    -configuration Release \
+    -destination "platform=macOS" \
+    -derivedDataPath "$DERIVED_DATA_DIR" \
+    CODE_SIGNING_ALLOWED=NO \
+    MARKETING_VERSION="$VERSION" \
+    CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+    build
 
-echo "Generating app icon..."
-swift "$ROOT_DIR/scripts/generate_app_icon.swift" "$ICONSET_DIR"
-iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AppIcon.icns"
-cp "$ROOT_DIR/Resources/AppIcon.svg" "$RESOURCES_DIR/AppIcon.svg"
+rm -rf "$APP_DIR" "$ZIP_PATH"
+mkdir -p "$DIST_DIR"
+ditto "$BUILT_APP" "$APP_DIR"
 
-cat > "$CONTENTS_DIR/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleDisplayName</key>
-    <string>$APP_NAME</string>
-    <key>CFBundleExecutable</key>
-    <string>$EXECUTABLE_NAME</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>CFBundleIdentifier</key>
-    <string>$BUNDLE_ID</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>$APP_NAME</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>$VERSION</string>
-    <key>CFBundleVersion</key>
-    <string>$BUILD_NUMBER</string>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.music</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSHumanReadableCopyright</key>
-    <string>Copyright © 2026. All rights reserved.</string>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
-</dict>
-</plist>
-PLIST
+if [[ ! -d "$APP_DIR/Contents/Frameworks/NTEPianoMidiPlayerCore.framework" ]]; then
+    echo "Packaging failed: embedded core framework is missing." >&2
+    exit 1
+fi
 
-plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
+if [[ ! -f "$RESOURCES_DIR/AppIcon.icns" ]]; then
+    echo "Packaging failed: compiled app icon is missing." >&2
+    exit 1
+fi
+
+if [[ ! -x "$VIRTUAL_HID_HELPER" ]]; then
+    echo "Packaging failed: NTEVirtualHIDBridge is missing from Contents/Helpers." >&2
+    exit 1
+fi
+
+"$VIRTUAL_HID_HELPER" --self-test
+/usr/bin/lipo "$VIRTUAL_HID_HELPER" -verify_arch arm64 x86_64
 
 echo "Creating unsigned ZIP release artifact..."
 (

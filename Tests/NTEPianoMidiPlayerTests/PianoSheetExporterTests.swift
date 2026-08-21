@@ -50,7 +50,7 @@ final class PianoSheetExporterTests: XCTestCase {
         XCTAssertEqual(text, "C,D\nE")
     }
 
-    func testCompositeNoteUsesPlusAndMidiChordUsesBrackets() {
+    func testExactLayerChordUsesModifierLabelsAndBrackets() {
         let settings = PlaybackSettings(layoutMode: .nte36Chromatic, baseMidiNoteForBAS1: 48)
         let mapped = NTE36ChromaticMapper().map(
             events: [
@@ -72,7 +72,7 @@ final class PianoSheetExporterTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(text, "[Z+X C]")
+        XCTAssertEqual(text, "[Shift+Z Shift+C]")
     }
 
     private func note(_ midiNote: Int, start: TimeInterval) -> MidiNoteEvent {

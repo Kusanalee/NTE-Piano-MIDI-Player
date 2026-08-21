@@ -55,6 +55,7 @@ public final class MidiFileLoader {
         var trackInfos: [MidiTrackInfo] = []
         var metaTempoChanges: [MidiTempoChange] = []
         var metaTimeSignatures: [MidiTimeSignature] = []
+        var unsupportedExpressionEventCount = 0
 
         for trackIndex in 0..<Int(trackCount) {
             var track: MusicTrack?
@@ -68,6 +69,7 @@ public final class MidiFileLoader {
             trackInfos.append(parsed.info)
             metaTempoChanges.append(contentsOf: parsed.tempoChanges)
             metaTimeSignatures.append(contentsOf: parsed.timeSignatures)
+            unsupportedExpressionEventCount += parsed.unsupportedExpressionEventCount
         }
 
         allEvents.sort {
@@ -89,7 +91,8 @@ public final class MidiFileLoader {
             noteEvents: allEvents,
             tempoChanges: tempoChanges,
             timeSignatures: timeSignatures,
-            duration: duration
+            duration: duration,
+            unsupportedExpressionEventCount: unsupportedExpressionEventCount
         )
     }
 
@@ -98,6 +101,7 @@ public final class MidiFileLoader {
         var notes: [MidiNoteEvent]
         var tempoChanges: [MidiTempoChange]
         var timeSignatures: [MidiTimeSignature]
+        var unsupportedExpressionEventCount: Int
     }
 
     private func parseTrack(
@@ -119,6 +123,10 @@ public final class MidiFileLoader {
         var firstProgram: UInt8?
         var tempoChanges: [MidiTempoChange] = []
         var timeSignatures: [MidiTimeSignature] = []
+        var sustainStarts: [UInt8: TimeInterval] = [:]
+        var sustainIntervals: [UInt8: [(start: TimeInterval, end: TimeInterval)]] = [:]
+        var unsupportedExpressionEventCount = 0
+        var lastEventSeconds: TimeInterval = 0
 
         var hasEvent = DarwinBoolean(false)
         MusicEventIteratorHasCurrentEvent(iterator, &hasEvent)
@@ -129,6 +137,8 @@ public final class MidiFileLoader {
             var eventData: UnsafeRawPointer?
             var eventDataSize: UInt32 = 0
             MusicEventIteratorGetEventInfo(iterator, &beat, &eventType, &eventData, &eventDataSize)
+            let eventSeconds = seconds(forBeat: beat, sequence: sequence)
+            lastEventSeconds = max(lastEventSeconds, eventSeconds)
 
             if eventType == kMusicEventType_MIDINoteMessage, let eventData {
                 let message = eventData.assumingMemoryBound(to: MIDINoteMessage.self).pointee
@@ -151,6 +161,15 @@ public final class MidiFileLoader {
                 if status == 0xC0 {
                     firstProgram = firstProgram ?? message.data1
                     firstChannel = firstChannel ?? (message.status & 0x0F)
+                } else if status == 0xB0, message.data1 == 64 {
+                    let channel = message.status & 0x0F
+                    if message.data2 >= 64 {
+                        sustainStarts[channel] = sustainStarts[channel] ?? eventSeconds
+                    } else if let start = sustainStarts.removeValue(forKey: channel) {
+                        sustainIntervals[channel, default: []].append((start, eventSeconds))
+                    }
+                } else if status == 0xE0 || status == 0xA0 || status == 0xD0 {
+                    unsupportedExpressionEventCount += 1
                 }
             } else if eventType == kMusicEventType_Meta, let eventData {
                 let meta = parseMetaEvent(eventData)
@@ -185,6 +204,22 @@ public final class MidiFileLoader {
             MusicEventIteratorHasCurrentEvent(iterator, &hasEvent)
         }
 
+        for (channel, start) in sustainStarts {
+            sustainIntervals[channel, default: []].append((start, lastEventSeconds))
+        }
+        if !sustainIntervals.isEmpty {
+            notes = notes.map { note in
+                var adjusted = note
+                let noteEnd = note.startTime + note.duration
+                if let interval = sustainIntervals[note.channel]?.first(where: {
+                    $0.start <= noteEnd && noteEnd < $0.end
+                }) {
+                    adjusted.duration = max(adjusted.duration, interval.end - note.startTime)
+                }
+                return adjusted
+            }
+        }
+
         let fallbackName = notes.isEmpty ? "Meta track \(trackIndex + 1)" : "Track \(trackIndex + 1)"
         let info = MidiTrackInfo(
             trackIndex: trackIndex,
@@ -198,7 +233,8 @@ public final class MidiFileLoader {
             info: info,
             notes: notes,
             tempoChanges: tempoChanges,
-            timeSignatures: timeSignatures
+            timeSignatures: timeSignatures,
+            unsupportedExpressionEventCount: unsupportedExpressionEventCount
         )
     }
 

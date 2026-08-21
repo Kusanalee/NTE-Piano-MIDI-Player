@@ -23,6 +23,29 @@ final class MidiParserTests: XCTestCase {
         XCTAssertTrue(document.timeSignatures.contains { $0.numerator == 4 && $0.denominator == 4 })
     }
 
+    func testFormatZeroSustainExtendsDurationAndCountsUnsupportedExpression() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mid")
+        try makeSustainFixtureMidiFile().write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let document = try MidiFileLoader().load(url: url)
+        XCTAssertEqual(document.tracks.filter { $0.noteCount > 0 }.count, 1)
+        XCTAssertEqual(document.noteEvents.count, 1)
+        XCTAssertEqual(document.noteEvents[0].duration, 1.0, accuracy: 0.02)
+        XCTAssertEqual(document.unsupportedExpressionEventCount, 1)
+    }
+
+    func testMalformedMidiFailsGracefully() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mid")
+        try Data([0x00, 0x01, 0x02]).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertThrowsError(try MidiFileLoader().load(url: url))
+    }
+
     private func makeFixtureMidiFile() -> Data {
         var data = Data()
         data.append(bytes: [0x4D, 0x54, 0x68, 0x64])
@@ -47,6 +70,26 @@ final class MidiParserTests: XCTestCase {
             0x00, 0xFF, 0x2F, 0x00
         ]
         data.appendTrack(noteTrack)
+        return data
+    }
+
+    private func makeSustainFixtureMidiFile() -> Data {
+        var data = Data()
+        data.append(bytes: [0x4D, 0x54, 0x68, 0x64])
+        data.appendUInt32BE(6)
+        data.appendUInt16BE(0)
+        data.appendUInt16BE(1)
+        data.appendUInt16BE(480)
+        let track: [UInt8] = [
+            0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20,
+            0x00, 0xB0, 0x40, 0x7F,
+            0x00, 0x90, 0x3C, 0x60,
+            0x83, 0x60, 0x80, 0x3C, 0x00,
+            0x00, 0xE0, 0x00, 0x40,
+            0x83, 0x60, 0xB0, 0x40, 0x00,
+            0x00, 0xFF, 0x2F, 0x00
+        ]
+        data.appendTrack(track)
         return data
     }
 }

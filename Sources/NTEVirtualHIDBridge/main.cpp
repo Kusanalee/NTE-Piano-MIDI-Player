@@ -408,6 +408,10 @@ void serve_client(
 } // namespace
 
 int main(int argc, char* argv[]) {
+  if (argc == 2 && std::string(argv[1]) == "--version") {
+    std::cout << protocol_version << std::endl;
+    return 0;
+  }
   if (argc == 2 && std::string(argv[1]) == "--self-test") {
     if (run_self_test()) {
       std::cout << "NTEVirtualHIDBridge self-test passed." << std::endl;

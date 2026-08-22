@@ -60,6 +60,7 @@ if [[ ! -x "$VIRTUAL_HID_HELPER" ]]; then
 fi
 
 "$VIRTUAL_HID_HELPER" --self-test
+"$VIRTUAL_HID_HELPER" --version
 /usr/bin/lipo "$VIRTUAL_HID_HELPER" -verify_arch arm64 x86_64
 
 echo "Creating unsigned ZIP release artifact..."

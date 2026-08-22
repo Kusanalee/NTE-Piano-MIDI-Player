@@ -111,7 +111,7 @@ public final class VirtualHIDSocketClient: VirtualHIDReportTransport, @unchecked
     }
 
     private var dependencyInstalled: Bool {
-        fileManager.fileExists(atPath: Self.managerPath) || fileManager.fileExists(atPath: Self.supportPath)
+        SetupInspector.isDriverInstalled || fileManager.fileExists(atPath: Self.managerPath)
     }
 
     private func requireReadyConnection() throws {

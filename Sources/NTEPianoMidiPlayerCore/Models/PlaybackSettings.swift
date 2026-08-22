@@ -152,6 +152,7 @@ public enum EventPostTarget: String, Codable, CaseIterable, Identifiable {
 
 public struct PlaybackSettings: Codable, Equatable {
     public static let defaultAcceptedForegroundAppNames = ["NTE.app", "NTE", "Neverness to Everness"]
+    public static let countdownOptions: [Double] = [3, 5, 7, 10, 15]
 
     public var layoutMode: LayoutMode
     public var arrangementMode: ArrangementMode
@@ -183,6 +184,9 @@ public struct PlaybackSettings: Codable, Equatable {
     public var modifierReuseWindow: Double
     public var layerSwitchGap: Double
     public var eventPostTarget: EventPostTarget
+    public var advancedSettingsEnabled: Bool
+    public var glassOpacity: Double
+    public var onboardingCompletedVersion: Int
 
     private enum CodingKeys: String, CodingKey {
         case layoutMode
@@ -216,6 +220,9 @@ public struct PlaybackSettings: Codable, Equatable {
         case modifierReuseWindow
         case layerSwitchGap
         case eventPostTarget
+        case advancedSettingsEnabled
+        case glassOpacity
+        case onboardingCompletedVersion
     }
 
     public init(
@@ -230,7 +237,7 @@ public struct PlaybackSettings: Codable, Equatable {
         targetKey: MusicalKey = .c,
         keyTranspositionEnabled: Bool = false,
         tempoMultiplier: Double = 1.0,
-        countdownDuration: Double = 3.0,
+        countdownDuration: Double = 7.0,
         tapDuration: Double = 0.032,
         holdSustainedNotes: Bool = false,
         maxHoldDuration: Double = 2.0,
@@ -248,7 +255,10 @@ public struct PlaybackSettings: Codable, Equatable {
         modifierReleaseDelay: Double = 0.008,
         modifierReuseWindow: Double = 0.120,
         layerSwitchGap: Double = 0.020,
-        eventPostTarget: EventPostTarget = .hidEventTap
+        eventPostTarget: EventPostTarget = .hidEventTap,
+        advancedSettingsEnabled: Bool = false,
+        glassOpacity: Double = 0.85,
+        onboardingCompletedVersion: Int = 0
     ) {
         self.layoutMode = layoutMode
         self.arrangementMode = arrangementMode
@@ -280,6 +290,9 @@ public struct PlaybackSettings: Codable, Equatable {
         self.modifierReuseWindow = modifierReuseWindow
         self.layerSwitchGap = layerSwitchGap
         self.eventPostTarget = eventPostTarget
+        self.advancedSettingsEnabled = advancedSettingsEnabled
+        self.glassOpacity = glassOpacity
+        self.onboardingCompletedVersion = onboardingCompletedVersion
     }
 
     public init(from decoder: Decoder) throws {
@@ -317,7 +330,10 @@ public struct PlaybackSettings: Codable, Equatable {
             modifierReleaseDelay: try container.decodeIfPresent(Double.self, forKey: .modifierReleaseDelay) ?? fallback.modifierReleaseDelay,
             modifierReuseWindow: try container.decodeIfPresent(Double.self, forKey: .modifierReuseWindow) ?? fallback.modifierReuseWindow,
             layerSwitchGap: try container.decodeIfPresent(Double.self, forKey: .layerSwitchGap) ?? fallback.layerSwitchGap,
-            eventPostTarget: try container.decodeIfPresent(EventPostTarget.self, forKey: .eventPostTarget) ?? fallback.eventPostTarget
+            eventPostTarget: try container.decodeIfPresent(EventPostTarget.self, forKey: .eventPostTarget) ?? fallback.eventPostTarget,
+            advancedSettingsEnabled: try container.decodeIfPresent(Bool.self, forKey: .advancedSettingsEnabled) ?? fallback.advancedSettingsEnabled,
+            glassOpacity: try container.decodeIfPresent(Double.self, forKey: .glassOpacity) ?? fallback.glassOpacity,
+            onboardingCompletedVersion: try container.decodeIfPresent(Int.self, forKey: .onboardingCompletedVersion) ?? fallback.onboardingCompletedVersion
         )
     }
 
@@ -353,6 +369,9 @@ public struct PlaybackSettings: Codable, Equatable {
         try container.encode(modifierReuseWindow, forKey: .modifierReuseWindow)
         try container.encode(layerSwitchGap, forKey: .layerSwitchGap)
         try container.encode(eventPostTarget, forKey: .eventPostTarget)
+        try container.encode(advancedSettingsEnabled, forKey: .advancedSettingsEnabled)
+        try container.encode(glassOpacity, forKey: .glassOpacity)
+        try container.encode(onboardingCompletedVersion, forKey: .onboardingCompletedVersion)
     }
 
     public var midiNoteForMID1: Int { baseMidiNoteForBAS1 + 12 }
@@ -373,7 +392,7 @@ public struct PlaybackSettings: Codable, Equatable {
         copy.globalTranspose = min(max(copy.globalTranspose, -24), 24)
         copy.octaveShift = min(max(copy.octaveShift, -3), 3)
         copy.tempoMultiplier = min(max(copy.tempoMultiplier, 0.25), 2.0)
-        copy.countdownDuration = min(max(copy.countdownDuration, 0), 10)
+        copy.countdownDuration = min(max(copy.countdownDuration, 0), 15)
         copy.tapDuration = min(max(copy.tapDuration, 0.005), 0.250)
         copy.maxHoldDuration = min(max(copy.maxHoldDuration, 0.050), 10)
         copy.chordThreshold = min(max(copy.chordThreshold, 0.001), 0.100)
@@ -384,6 +403,7 @@ public struct PlaybackSettings: Codable, Equatable {
         copy.modifierReleaseDelay = min(max(copy.modifierReleaseDelay, 0), 0.100)
         copy.modifierReuseWindow = min(max(copy.modifierReuseWindow, 0), 1.000)
         copy.layerSwitchGap = min(max(copy.layerSwitchGap, 0), 0.250)
+        copy.glassOpacity = min(max(copy.glassOpacity, 0.35), 1.0)
         copy.acceptedForegroundAppNames = copy.acceptedForegroundAppNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }

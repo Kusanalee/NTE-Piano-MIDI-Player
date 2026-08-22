@@ -27,6 +27,8 @@
 		BC00000F000000000000000F /* Input/VirtualHIDProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = C000000F000000000000000F /* Input/VirtualHIDProtocol.swift */; };
 		BC0000100000000000000010 /* Input/VirtualHIDTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000100000000000000010 /* Input/VirtualHIDTransport.swift */; };
 		BC0000110000000000000011 /* Input/VirtualHIDKeyInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000011 /* Input/VirtualHIDKeyInjector.swift */; };
+		BC0000130000000000000013 /* Setup/PrivilegedServiceInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000130000000000000013 /* Setup/PrivilegedServiceInstaller.swift */; };
+		BC0000120000000000000012 /* Setup/SetupState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000120000000000000012 /* Setup/SetupState.swift */; };
 		BD0000010000000000000001 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000010000000000000001 /* AppViewModel.swift */; };
 		BD0000020000000000000002 /* NTEPianoMidiPlayerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000020000000000000002 /* NTEPianoMidiPlayerApp.swift */; };
 		BD0000030000000000000003 /* UI/ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000030000000000000003 /* UI/ContentView.swift */; };
@@ -35,6 +37,9 @@
 		BD0000060000000000000006 /* UI/SheetExporterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000060000000000000006 /* UI/SheetExporterView.swift */; };
 		BD0000070000000000000007 /* UI/TrackListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000070000000000000007 /* UI/TrackListView.swift */; };
 		BD0000080000000000000008 /* UI/SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000080000000000000008 /* UI/SettingsView.swift */; };
+		BD00000B00000000000000B /* UI/Onboarding/OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D000000B00000000000000B /* UI/Onboarding/OnboardingView.swift */; };
+		BD00000A00000000000000A /* UI/CountdownOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D000000A00000000000000A /* UI/CountdownOverlayView.swift */; };
+		BD0000090000000000000009 /* UI/GlassBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000090000000000000009 /* UI/GlassBackground.swift */; };
 		BE0000010000000000000001 /* PianoSheetExporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E00000010000000000000001 /* PianoSheetExporterTests.swift */; };
 		BE0000020000000000000002 /* NoteMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E00000020000000000000002 /* NoteMapperTests.swift */; };
 		BE0000030000000000000003 /* MidiParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E00000030000000000000003 /* MidiParserTests.swift */; };
@@ -43,6 +48,7 @@
 		BE0000060000000000000006 /* EventSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E00000060000000000000006 /* EventSchedulerTests.swift */; };
 		BE0000070000000000000007 /* SettingsMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E00000070000000000000007 /* SettingsMigrationTests.swift */; };
 		BE0000080000000000000008 /* VirtualHIDTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E00000080000000000000008 /* VirtualHIDTests.swift */; };
+		BE0000090000000000000009 /* SetupStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E00000090000000000000009 /* SetupStateTests.swift */; };
 		BF0000010000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00000010000000000000001 /* Assets.xcassets */; };
 		BG0000010000000000000001 /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = G00000010000000000000001 /* main.cpp */; };
 /* End PBXBuildFile section */
@@ -107,6 +113,8 @@
 		C000000F000000000000000F /* Input/VirtualHIDProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Input/VirtualHIDProtocol.swift; sourceTree = "<group>"; };
 		C00000100000000000000010 /* Input/VirtualHIDTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Input/VirtualHIDTransport.swift; sourceTree = "<group>"; };
 		C00000110000000000000011 /* Input/VirtualHIDKeyInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Input/VirtualHIDKeyInjector.swift; sourceTree = "<group>"; };
+		C00000130000000000000013 /* Setup/PrivilegedServiceInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Setup/PrivilegedServiceInstaller.swift; sourceTree = "<group>"; };
+		C00000120000000000000012 /* Setup/SetupState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Setup/SetupState.swift; sourceTree = "<group>"; };
 		D00000010000000000000001 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		D00000020000000000000002 /* NTEPianoMidiPlayerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NTEPianoMidiPlayerApp.swift; sourceTree = "<group>"; };
 		D00000030000000000000003 /* UI/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/ContentView.swift; sourceTree = "<group>"; };
@@ -115,6 +123,9 @@
 		D00000060000000000000006 /* UI/SheetExporterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/SheetExporterView.swift; sourceTree = "<group>"; };
 		D00000070000000000000007 /* UI/TrackListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/TrackListView.swift; sourceTree = "<group>"; };
 		D00000080000000000000008 /* UI/SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/SettingsView.swift; sourceTree = "<group>"; };
+		D000000B00000000000000B /* UI/Onboarding/OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Onboarding/OnboardingView.swift; sourceTree = "<group>"; };
+		D000000A00000000000000A /* UI/CountdownOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/CountdownOverlayView.swift; sourceTree = "<group>"; };
+		D00000090000000000000009 /* UI/GlassBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/GlassBackground.swift; sourceTree = "<group>"; };
 		E00000010000000000000001 /* PianoSheetExporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PianoSheetExporterTests.swift; sourceTree = "<group>"; };
 		E00000020000000000000002 /* NoteMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteMapperTests.swift; sourceTree = "<group>"; };
 		E00000030000000000000003 /* MidiParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MidiParserTests.swift; sourceTree = "<group>"; };
@@ -123,6 +134,7 @@
 		E00000060000000000000006 /* EventSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventSchedulerTests.swift; sourceTree = "<group>"; };
 		E00000070000000000000007 /* SettingsMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsMigrationTests.swift; sourceTree = "<group>"; };
 		E00000080000000000000008 /* VirtualHIDTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualHIDTests.swift; sourceTree = "<group>"; };
+		E00000090000000000000009 /* SetupStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupStateTests.swift; sourceTree = "<group>"; };
 		F00000010000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		G00000010000000000000001 /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -202,6 +214,8 @@
 				C000000F000000000000000F /* Input/VirtualHIDProtocol.swift */,
 				C00000100000000000000010 /* Input/VirtualHIDTransport.swift */,
 				C00000110000000000000011 /* Input/VirtualHIDKeyInjector.swift */,
+				C00000130000000000000013 /* Setup/PrivilegedServiceInstaller.swift */,
+				C00000120000000000000012 /* Setup/SetupState.swift */,
 			);
 			path = Sources/NTEPianoMidiPlayerCore;
 			sourceTree = SOURCE_ROOT;
@@ -217,6 +231,9 @@
 				D00000060000000000000006 /* UI/SheetExporterView.swift */,
 				D00000070000000000000007 /* UI/TrackListView.swift */,
 				D00000080000000000000008 /* UI/SettingsView.swift */,
+				D000000B00000000000000B /* UI/Onboarding/OnboardingView.swift */,
+				D000000A00000000000000A /* UI/CountdownOverlayView.swift */,
+				D00000090000000000000009 /* UI/GlassBackground.swift */,
 			);
 			path = Sources/NTEPianoMidiPlayer;
 			sourceTree = SOURCE_ROOT;
@@ -240,6 +257,7 @@
 				E00000060000000000000006 /* EventSchedulerTests.swift */,
 				E00000070000000000000007 /* SettingsMigrationTests.swift */,
 				E00000080000000000000008 /* VirtualHIDTests.swift */,
+				E00000090000000000000009 /* SetupStateTests.swift */,
 			);
 			path = Tests/NTEPianoMidiPlayerTests;
 			sourceTree = SOURCE_ROOT;
@@ -433,6 +451,9 @@
 				BD0000060000000000000006 /* UI/SheetExporterView.swift in Sources */,
 				BD0000070000000000000007 /* UI/TrackListView.swift in Sources */,
 				BD0000080000000000000008 /* UI/SettingsView.swift in Sources */,
+				BD00000B00000000000000B /* UI/Onboarding/OnboardingView.swift in Sources */,
+				BD00000A00000000000000A /* UI/CountdownOverlayView.swift in Sources */,
+				BD0000090000000000000009 /* UI/GlassBackground.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -457,6 +478,8 @@
 				BC00000F000000000000000F /* Input/VirtualHIDProtocol.swift in Sources */,
 				BC0000100000000000000010 /* Input/VirtualHIDTransport.swift in Sources */,
 				BC0000110000000000000011 /* Input/VirtualHIDKeyInjector.swift in Sources */,
+				BC0000130000000000000013 /* Setup/PrivilegedServiceInstaller.swift in Sources */,
+				BC0000120000000000000012 /* Setup/SetupState.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -472,6 +495,7 @@
 				BE0000060000000000000006 /* EventSchedulerTests.swift in Sources */,
 				BE0000070000000000000007 /* SettingsMigrationTests.swift in Sources */,
 				BE0000080000000000000008 /* VirtualHIDTests.swift in Sources */,
+				BE0000090000000000000009 /* SetupStateTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -508,7 +532,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
 			};
@@ -518,7 +542,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";

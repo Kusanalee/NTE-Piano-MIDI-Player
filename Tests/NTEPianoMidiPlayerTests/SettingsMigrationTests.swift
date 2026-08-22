@@ -59,6 +59,51 @@ final class SettingsMigrationTests: XCTestCase {
         }
     }
 
+    func testDefaultCountdownIsSevenSecondsAndClampsToFifteen() throws {
+        XCTAssertEqual(PlaybackSettings().countdownDuration, 7.0)
+
+        var overshoot = PlaybackSettings()
+        overshoot.countdownDuration = 999
+        XCTAssertEqual(overshoot.clamped().countdownDuration, 15)
+
+        var undershoot = PlaybackSettings()
+        undershoot.countdownDuration = -5
+        XCTAssertEqual(undershoot.clamped().countdownDuration, 0)
+    }
+
+    func testNewOnboardingAndAppearanceFieldsRoundTripThroughCoding() throws {
+        var settings = PlaybackSettings()
+        settings.advancedSettingsEnabled = true
+        settings.glassOpacity = 0.6
+        settings.onboardingCompletedVersion = 3
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(PlaybackSettings.self, from: data)
+
+        XCTAssertTrue(decoded.advancedSettingsEnabled)
+        XCTAssertEqual(decoded.glassOpacity, 0.6)
+        XCTAssertEqual(decoded.onboardingCompletedVersion, 3)
+    }
+
+    func testMissingNewFieldsDecodeToSafeDefaults() throws {
+        let legacy = Data(#"{"layoutMode":"nte21Natural"}"#.utf8)
+        let settings = try JSONDecoder().decode(PlaybackSettings.self, from: legacy)
+
+        XCTAssertFalse(settings.advancedSettingsEnabled)
+        XCTAssertEqual(settings.glassOpacity, 0.85)
+        XCTAssertEqual(settings.onboardingCompletedVersion, 0)
+    }
+
+    func testGlassOpacityClampsToItsRange() throws {
+        var tooLow = PlaybackSettings()
+        tooLow.glassOpacity = 0
+        XCTAssertEqual(tooLow.clamped().glassOpacity, 0.35)
+
+        var tooHigh = PlaybackSettings()
+        tooHigh.glassOpacity = 5
+        XCTAssertEqual(tooHigh.clamped().glassOpacity, 1.0)
+    }
+
     private func makeDefaults() throws -> (UserDefaults, String) {
         let suiteName = "SettingsMigrationTests.\(UUID().uuidString)"
         return (try XCTUnwrap(UserDefaults(suiteName: suiteName)), suiteName)

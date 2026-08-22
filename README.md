@@ -6,10 +6,10 @@ The project is an original SwiftUI implementation. It does not read game memory,
 
 ## Requirements
 
-- macOS 13 or newer
-- Xcode with the macOS SDK
-- Accessibility permission for 21-key live playback
-- Karabiner DriverKit VirtualHIDDevice 8.2.0 and the bundled staged bridge for 36-key live playback
+- macOS 26 or newer
+- Xcode with the macOS SDK, to build from source
+- Accessibility permission for 21-key live playback (the app's Setup Assistant asks for this when needed)
+- Karabiner DriverKit VirtualHIDDevice 8.2.0 (or a compatible Karabiner-Elements install) for 36-key live playback — the Setup Assistant walks you through installing it and can set up the background services itself with one administrator prompt
 
 Preview Mode, MIDI inspection, Listen/Speaker Playback, and sheet export do not request Accessibility access.
 
@@ -65,40 +65,37 @@ Only remove quarantine from a copy downloaded from the official repository or bu
 
 ## Basic use
 
+On first launch, the Setup Assistant walks you through installing the virtual keyboard driver (or skipping it for 21-key natural mode) and, if you want 36-key playback, installs its background services with one administrator prompt. After that:
+
 1. Open or drag in a `.mid` or `.midi` file.
-2. Enable, mute, or solo tracks.
-3. Choose Automatic or Original arrangement and the 21-key or 36-key layout.
-4. Keep Preview Mode on to inspect the complete arrangement without sending input.
-5. Press Play. For live input, turn Preview Mode off, focus NTE during the countdown, and keep the piano open.
+2. Press Play.
+3. When the countdown appears, switch to NTE and open the in-game piano before it reaches zero.
 
-The separate Listen button uses speaker playback and does not send keyboard input.
+That's the whole flow. Track enable/mute/solo and the Listen (speaker preview) button stay on the main window; everything else — arrangement mode, transpose, layout, timing, manual key remapping, and diagnostics — lives behind **Settings → Enable Advanced Developer Settings**, off by default so the app plays without asking you to understand any of it. Re-run the Setup Assistant any time from **Help → Setup Assistant** or the Settings General tab.
 
-Preview Mode starts enabled by default. The session toolbar toggle does not change the persisted “Start in Preview Mode” preference in Settings.
+Preview Mode (available in Advanced settings) runs the complete arrangement without sending any input, for inspecting a file before you commit to a countdown.
 
-## Staged 36-key VirtualHID setup
+## 36-key VirtualHID setup
 
-NTE accepts physical Shift and Control but rejects equivalent Quartz modifier state. Therefore, all 36-key letters and modifiers are sent through one virtual hardware keyboard. This staged release uses the standalone [Karabiner DriverKit VirtualHIDDevice 8.2.0](https://github.com/pqrs-org/Karabiner-DriverKit-VirtualHIDDevice/releases/tag/v8.2.0), not the full Karabiner-Elements app.
+NTE accepts physical Shift and Control but rejects equivalent Quartz modifier state. Therefore, all 36-key letters and modifiers are sent through one virtual hardware keyboard: the standalone [Karabiner DriverKit VirtualHIDDevice 8.2.0](https://github.com/pqrs-org/Karabiner-DriverKit-VirtualHIDDevice/releases/tag/v8.2.0) (a compatible driver bundled with a full Karabiner-Elements install also works, since both share the same install path), plus this app's own bridge that relays key presses to it.
 
-1. Download and install `Karabiner-DriverKit-VirtualHIDDevice-8.2.0.pkg` from the official release.
-2. Activate the extension and approve it in System Settings if macOS asks:
+The **Setup Assistant** (shown on first launch, and reachable any time from Help → Setup Assistant) walks through this automatically:
 
-   ```sh
-   '/Applications/.Karabiner-VirtualHIDDevice-Manager.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Manager' activate
-   ```
+1. **Install the driver** — opens the official release page; the assistant detects installation live.
+2. **Approve the extension** — one click activates it, then approve it in System Settings if macOS prompts.
+3. **Set up background services** — installs a LaunchDaemon for Karabiner's own daemon (skipped if one is already present, so a full Karabiner-Elements install is never touched) and one for this app's bridge, so both start automatically at login. This is the one step that needs an administrator password, asked once.
 
-3. Keep the official daemon running in one Terminal window:
+You can skip driver installation entirely and use 21-key natural mode instead, which needs only Accessibility permission and no background services. **Settings → General → Setup** shows live readiness and has a **Remove Helper Services** button that uninstalls both LaunchDaemons.
 
-   ```sh
-   sudo '/Library/Application Support/org.pqrs/Karabiner-DriverKit-VirtualHIDDevice/Applications/Karabiner-VirtualHIDDevice-Daemon.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Daemon'
-   ```
+If the administrator prompt isn't available on your Mac, the Setup Assistant's background-services step reveals the equivalent manual commands to run in Terminal:
 
-4. Keep the bundled bridge running in another Terminal window:
+```sh
+'/Applications/.Karabiner-VirtualHIDDevice-Manager.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Manager' activate
+sudo '/Library/Application Support/org.pqrs/Karabiner-DriverKit-VirtualHIDDevice/Applications/Karabiner-VirtualHIDDevice-Daemon.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Daemon'
+sudo '/Applications/NTE Piano MIDI Player.app/Contents/Helpers/NTEVirtualHIDBridge' --allowed-uid "$(id -u)"
+```
 
-   ```sh
-   sudo '/Applications/NTE Piano MIDI Player.app/Contents/Helpers/NTEVirtualHIDBridge' --allowed-uid "$(id -u)"
-   ```
-
-Settings shows the current driver/daemon/bridge state and can copy commands using the app's actual location and user ID. The bridge runs as root because the upstream driver requires it, but accepts only one authenticated local user and only the 21 piano letters, left Shift, and left Control. It releases the keyboard on disconnect or heartbeat timeout. There is no silent Quartz fallback when 36-key VirtualHID is unavailable.
+The bridge runs as root because the upstream driver requires it, but accepts only one authenticated local user and only the 21 piano letters, left Shift, and left Control. It releases the keyboard on disconnect or heartbeat timeout. There is no silent Quartz fallback when 36-key VirtualHID is unavailable.
 
 ## Arrangement modes
 
@@ -184,16 +181,17 @@ The in-game piano is at Hethereau Skytower in the Miguel District; take the elev
 
 ### Input-event diagnostics
 
-The Input Event Recorder below Range Diagnostics compares physical keyboard input with events injected by the player. Start recording, physically hold left Shift and left Control in NTE, then run the two-second Hold Shift and Hold Ctrl calibrations. Stop recording and use Copy Trace. `PLAYER` identifies Quartz events tagged by this app. VirtualHID travels through the hardware path and may appear as `EXTERNAL` with `pid=0`, so correlate it with the separate VirtualHID report trace. The recorder captures only Shift, Control, and the 21 piano letter keys, is capped at 500 events, and requires Accessibility permission; it does not require Input Monitoring access.
+With **Enable Advanced Developer Settings** on, the Input Event Recorder below Range Diagnostics compares physical keyboard input with events injected by the player. Start recording, physically hold left Shift and left Control in NTE, then run the two-second Hold Shift and Hold Ctrl calibrations. Stop recording and use Copy Trace. `PLAYER` identifies Quartz events tagged by this app. VirtualHID travels through the hardware path and may appear as `EXTERNAL` with `pid=0`, so correlate it with the separate VirtualHID report trace. The recorder captures only Shift, Control, and the 21 piano letter keys, is capped at 500 events, and requires Accessibility permission; it does not require Input Monitoring access.
 
 ## Other features
 
-- Track search, enable, mute, and solo controls
-- Tempo multiplier, countdown, pause/resume, and progress
-- Visual keyboard preview and transformation diagnostics
-- Manual keyboard remapping and modifier calibration
-- Piano-sheet export with note names, degrees, key labels, line wrapping, and chord brackets
-- Persistent settings and recent files through the existing UserDefaults domain
+- Track search, enable, mute, and solo controls (visible on the main window)
+- Listen (speaker preview) using `AVMIDIPlayer`, separate from key injection (visible on the main window)
+- Countdown before playback (3s / 5s / 7s / 10s / 15s, in Settings → General), Liquid Glass opacity, and light/dark/system appearance in Settings → General
+- Tempo multiplier, pause/resume, progress, visual keyboard preview, and transformation diagnostics (Advanced)
+- Manual keyboard remapping and modifier calibration (Advanced)
+- Piano-sheet export with note names, degrees, key labels, line wrapping, and chord brackets (Advanced, and via the File menu)
+- Persistent settings and recent files (File → Open Recent) through the existing UserDefaults domain
 
 ## Known limitations
 

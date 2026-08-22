@@ -30,6 +30,11 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var keyboardEventTraceText = "No input-event trace recorded."
     @Published private(set) var virtualHIDStatus: VirtualHIDConnectionStatus = .checking
     @Published private(set) var virtualHIDReportTraceText = "No VirtualHID reports sent."
+    @Published private(set) var readiness: SetupReadiness = .blocked(.installDriver, detail: "Checking setup status…")
+    @Published var showingOnboarding = false
+    @Published var setupActionError: String?
+    @Published private(set) var isInstallingServices = false
+    @Published private(set) var countdownRemaining: TimeInterval?
 
     let settingsStore: SettingsStore
 
@@ -44,6 +49,12 @@ final class AppViewModel: ObservableObject {
     private var arrangementToken: ArrangementCancellationToken?
     private var recordedKeyboardEvents: [RecordedKeyboardEvent] = []
     private var keyboardEventTraceHeader = ""
+    private var readinessPollTimer: Timer?
+    private var countdownTimer: Timer?
+    private var countdownEndDate: Date?
+
+    /// Bump when onboarding needs to run again for existing users (e.g. a new required step).
+    static let currentOnboardingVersion = 1
 
     init(settingsStore: SettingsStore = SettingsStore()) {
         self.settingsStore = settingsStore
@@ -66,6 +77,8 @@ final class AppViewModel: ObservableObject {
             }
         }
         refreshVirtualHIDStatus()
+        refreshReadiness()
+        showingOnboarding = settingsStore.settings.onboardingCompletedVersion < Self.currentOnboardingVersion
     }
 
     var duration: TimeInterval {
@@ -263,6 +276,7 @@ final class AppViewModel: ObservableObject {
             onStateChange: { [weak self] state in
                 Task { @MainActor in
                     self?.playbackState = state
+                    self?.updateCountdownDisplay(for: state, duration: injectionSettings.countdownDuration)
                 }
             },
             onProgress: { [weak self] time in
@@ -282,6 +296,7 @@ final class AppViewModel: ObservableObject {
     func pause() {
         scheduler.pause()
         playbackState = .paused
+        endCountdownDisplay()
         statusMessage = "Playback paused."
     }
 
@@ -295,6 +310,7 @@ final class AppViewModel: ObservableObject {
         scheduler.stop()
         previewPlayer.stop()
         playbackState = .stopped
+        endCountdownDisplay()
         previewLogText = activeInjector?.previewLog.joined(separator: "\n") ?? ""
         virtualHIDReportTraceText = formattedVirtualHIDReportTrace()
         activeInjector = nil
@@ -346,6 +362,102 @@ final class AppViewModel: ObservableObject {
                 self?.virtualHIDStatus = status
             }
         }
+    }
+
+    /// Re-runs the full setup ladder (driver, extension, background services, or
+    /// Accessibility, depending on the selected layout) on a background queue.
+    func refreshReadiness() {
+        let layoutMode = settingsStore.settings.layoutMode
+        let injector = virtualHIDInjector
+        DispatchQueue.global(qos: .utility).async {
+            let virtualHIDStatus = injector.refreshConnectionStatus()
+            let accessibilityTrusted = AccessibilityPermission.isTrusted(prompt: false)
+            let readiness = SetupInspector.readiness(
+                virtualHIDStatus: virtualHIDStatus,
+                layoutMode: layoutMode,
+                accessibilityTrusted: accessibilityTrusted
+            )
+            DispatchQueue.main.async { [weak self] in
+                self?.virtualHIDStatus = virtualHIDStatus
+                self?.readiness = readiness
+            }
+        }
+    }
+
+    /// Call from `.onAppear` on the onboarding sheet or the Settings General tab. Harmless to
+    /// call repeatedly; playback never polls.
+    func startReadinessPolling() {
+        stopReadinessPolling()
+        refreshReadiness()
+        readinessPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.refreshReadiness()
+        }
+    }
+
+    func stopReadinessPolling() {
+        readinessPollTimer?.invalidate()
+        readinessPollTimer = nil
+    }
+
+    func installPrivilegedServices() {
+        guard !isInstallingServices else { return }
+        isInstallingServices = true
+        setupActionError = nil
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try PrivilegedServiceInstaller.install()
+                DispatchQueue.main.async {
+                    self?.isInstallingServices = false
+                    self?.refreshReadiness()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.isInstallingServices = false
+                    self?.setupActionError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func removePrivilegedServices() {
+        guard !isInstallingServices else { return }
+        isInstallingServices = true
+        setupActionError = nil
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try PrivilegedServiceInstaller.uninstall()
+                DispatchQueue.main.async {
+                    self?.isInstallingServices = false
+                    self?.refreshReadiness()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.isInstallingServices = false
+                    self?.setupActionError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func activateDriverExtension() {
+        let path = "/Applications/.Karabiner-VirtualHIDDevice-Manager.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Manager"
+        guard FileManager.default.isExecutableFile(atPath: path) else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["activate"]
+        try? process.run()
+    }
+
+    func skipToTwentyOneKey() {
+        settingsStore.settings.layoutMode = .nte21Natural
+        refreshReadiness()
+    }
+
+    func completeOnboarding() {
+        settingsStore.settings.onboardingCompletedVersion = Self.currentOnboardingVersion
+        settingsStore.settings.startInPreviewMode = false
+        isPreviewMode = false
+        showingOnboarding = false
     }
 
     func openVirtualHIDReleasePage() {
@@ -676,6 +788,42 @@ final class AppViewModel: ObservableObject {
             "NTE Piano MIDI Player VirtualHID report trace",
             "bridgeProtocol=\(VirtualHIDConstants.protocolVersion) driver=\(VirtualHIDConstants.expectedDriverVersion) upstreamProtocol=\(VirtualHIDConstants.expectedClientProtocolVersion)"
         ] + lines).joined(separator: "\n")
+    }
+
+    private func updateCountdownDisplay(for state: PlaybackState, duration: TimeInterval) {
+        if state == .countingDown {
+            beginCountdownDisplay(duration: duration)
+        } else {
+            endCountdownDisplay()
+        }
+    }
+
+    private func beginCountdownDisplay(duration: TimeInterval) {
+        guard duration > 0 else { return }
+        countdownTimer?.invalidate()
+        let endDate = Date().addingTimeInterval(duration)
+        countdownEndDate = endDate
+        countdownRemaining = duration
+        countdownTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
+            guard let self, let endDate = self.countdownEndDate else {
+                timer.invalidate()
+                return
+            }
+            let remaining = endDate.timeIntervalSinceNow
+            if remaining <= 0 {
+                self.countdownRemaining = 0
+                timer.invalidate()
+            } else {
+                self.countdownRemaining = remaining
+            }
+        }
+    }
+
+    private func endCountdownDisplay() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        countdownEndDate = nil
+        countdownRemaining = nil
     }
 
     private func handleFinish(_ reason: PlaybackFinishReason) {

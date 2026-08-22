@@ -6,7 +6,6 @@ import SwiftUI
 /// they don't miss it, and offer a way out.
 struct CountdownOverlayView: View {
     let remaining: TimeInterval
-    let acceptedAppName: String
     let onCancel: () -> Void
 
     private var wholeSeconds: Int {
@@ -24,7 +23,7 @@ struct CountdownOverlayView: View {
                     .font(.system(size: 40))
                     .foregroundStyle(.tint)
 
-                Text("Switch to \(acceptedAppName)")
+                Text("Switch to Neverness to Everness")
                     .font(.title)
                     .fontWeight(.semibold)
 

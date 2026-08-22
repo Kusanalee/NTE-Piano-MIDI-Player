@@ -52,6 +52,7 @@ final class AppViewModel: ObservableObject {
     private var readinessPollTimer: Timer?
     private var countdownTimer: Timer?
     private var countdownEndDate: Date?
+    private var hasResolvedInitialOnboarding = false
 
     /// Bump when onboarding needs to run again for existing users (e.g. a new required step).
     static let currentOnboardingVersion = 1
@@ -78,7 +79,6 @@ final class AppViewModel: ObservableObject {
         }
         refreshVirtualHIDStatus()
         refreshReadiness()
-        showingOnboarding = settingsStore.settings.onboardingCompletedVersion < Self.currentOnboardingVersion
     }
 
     var duration: TimeInterval {
@@ -380,7 +380,22 @@ final class AppViewModel: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 self?.virtualHIDStatus = virtualHIDStatus
                 self?.readiness = readiness
+                self?.resolveInitialOnboardingIfNeeded()
             }
+        }
+    }
+
+    /// Runs once, after the first readiness probe returns. A Mac that is already set up
+    /// (reinstall, second user account) should never see the wizard, but the driver check
+    /// shells out to `systemextensionsctl`, so this can't be decided synchronously in `init`.
+    private func resolveInitialOnboardingIfNeeded() {
+        guard !hasResolvedInitialOnboarding else { return }
+        hasResolvedInitialOnboarding = true
+        guard settingsStore.settings.onboardingCompletedVersion < Self.currentOnboardingVersion else { return }
+        if readiness.isReady {
+            settingsStore.settings.onboardingCompletedVersion = Self.currentOnboardingVersion
+        } else {
+            showingOnboarding = true
         }
     }
 
@@ -390,7 +405,7 @@ final class AppViewModel: ObservableObject {
         stopReadinessPolling()
         refreshReadiness()
         readinessPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.refreshReadiness()
+            MainActor.assumeIsolated { self?.refreshReadiness() }
         }
     }
 
@@ -805,16 +820,18 @@ final class AppViewModel: ObservableObject {
         countdownEndDate = endDate
         countdownRemaining = duration
         countdownTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
-            guard let self, let endDate = self.countdownEndDate else {
-                timer.invalidate()
-                return
-            }
-            let remaining = endDate.timeIntervalSinceNow
-            if remaining <= 0 {
-                self.countdownRemaining = 0
-                timer.invalidate()
-            } else {
-                self.countdownRemaining = remaining
+            MainActor.assumeIsolated {
+                guard let self, let endDate = self.countdownEndDate else {
+                    timer.invalidate()
+                    return
+                }
+                let remaining = endDate.timeIntervalSinceNow
+                if remaining <= 0 {
+                    self.countdownRemaining = 0
+                    timer.invalidate()
+                } else {
+                    self.countdownRemaining = remaining
+                }
             }
         }
     }

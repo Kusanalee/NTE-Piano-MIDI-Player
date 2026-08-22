@@ -129,6 +129,8 @@ private struct GeneralSettingsTab: View {
 private struct AdvancedSettingsTab: View {
     @ObservedObject var settingsStore: SettingsStore
     @ObservedObject var viewModel: AppViewModel
+    @State private var acceptedAppNamesText = ""
+    @FocusState private var acceptedAppNamesFieldIsFocused: Bool
 
     var body: some View {
         Form {
@@ -225,7 +227,24 @@ private struct AdvancedSettingsTab: View {
                         Text(hotkey.displayName).tag(hotkey)
                     }
                 }
-                TextField("Accepted foreground app names", text: acceptedAppNamesBinding)
+                TextField("Accepted foreground app names", text: $acceptedAppNamesText)
+                    .focused($acceptedAppNamesFieldIsFocused)
+                    .onSubmit(commitAcceptedAppNames)
+                    .onChange(of: acceptedAppNamesFieldIsFocused) { _, isFocused in
+                        if !isFocused {
+                            commitAcceptedAppNames()
+                        }
+                    }
+                    .onChange(of: settingsStore.settings.acceptedForegroundAppNames) { _, appNames in
+                        if !acceptedAppNamesFieldIsFocused {
+                            acceptedAppNamesText = appNames.joined(separator: ", ")
+                        }
+                    }
+                    .onAppear(perform: syncAcceptedAppNamesText)
+                    .onDisappear(perform: commitAcceptedAppNames)
+                Text("Separate app names with commas. Changes save when you press Return or leave the field.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Button("Open Accessibility Settings", action: viewModel.openAccessibilitySettings)
             }
 
@@ -289,16 +308,22 @@ private struct AdvancedSettingsTab: View {
         .padding()
     }
 
-    private var acceptedAppNamesBinding: Binding<String> {
-        Binding(
-            get: { settingsStore.settings.acceptedForegroundAppNames.joined(separator: ", ") },
-            set: { value in
-                settingsStore.settings.acceptedForegroundAppNames = value
-                    .split(separator: ",")
-                    .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-            }
-        )
+    private func syncAcceptedAppNamesText() {
+        acceptedAppNamesText = settingsStore.settings.acceptedForegroundAppNames.joined(separator: ", ")
+    }
+
+    private func commitAcceptedAppNames() {
+        var updatedSettings = settingsStore.settings
+        updatedSettings.acceptedForegroundAppNames = acceptedAppNamesText
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let normalizedAppNames = updatedSettings.clamped().acceptedForegroundAppNames
+        if settingsStore.settings.acceptedForegroundAppNames != normalizedAppNames {
+            settingsStore.settings.acceptedForegroundAppNames = normalizedAppNames
+        }
+        acceptedAppNamesText = normalizedAppNames.joined(separator: ", ")
     }
 
     private func binding<Value>(_ keyPath: WritableKeyPath<PlaybackSettings, Value>) -> Binding<Value> {

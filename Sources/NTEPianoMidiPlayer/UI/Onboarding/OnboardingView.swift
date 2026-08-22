@@ -4,8 +4,8 @@ import SwiftUI
 
 /// First-run setup wizard. Walks a new user from "just downloaded the app" to "ready to
 /// play": install the virtual keyboard driver, approve it, install the background services
-/// that run it, and (for 21-key mode) grant Accessibility. Each step advances itself the
-/// moment its condition is detected — the user only has to act, never confirm.
+/// that run it, and (for 21-key mode) grant Accessibility. Each step's status row updates
+/// live as its condition is detected, but the user always confirms with Continue.
 struct OnboardingView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.dismiss) private var dismiss
@@ -46,6 +46,20 @@ struct OnboardingView: View {
         return all.indices.contains(pageIndex) ? all[pageIndex] : (all.last ?? .welcome)
     }
 
+    /// Only the pages that represent an actual setup step (excludes welcome/done), so the
+    /// footer's "Step N of M" counts real work instead of the wizard's own bookend pages.
+    private var stepPages: [Page] {
+        pages.filter { $0.setupStep != nil }
+    }
+
+    private var currentStepNumber: Int? {
+        stepPages.firstIndex(of: currentPage).map { $0 + 1 }
+    }
+
+    private var canContinue: Bool {
+        currentPage.setupStep.map(isStepSatisfied) ?? true
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             content
@@ -59,9 +73,15 @@ struct OnboardingView: View {
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text("Step \(pageIndex) of \(pages.count - 1)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if stepPages.count > 1, let stepNumber = currentStepNumber {
+                        Text("Step \(stepNumber) of \(stepPages.count)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    Button("Continue") { pageIndex = min(pageIndex + 1, pages.count - 1) }
+                        .buttonStyle(.glassProminent)
+                        .disabled(!canContinue)
                 }
                 .padding(16)
             }
@@ -72,7 +92,6 @@ struct OnboardingView: View {
         }
         .onAppear { viewModel.startReadinessPolling() }
         .onDisappear { viewModel.stopReadinessPolling() }
-        .onChange(of: viewModel.readiness) { _, newValue in autoAdvance(readiness: newValue) }
     }
 
     @ViewBuilder
@@ -107,7 +126,7 @@ struct OnboardingView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Spacer()
-            Button("Get Started") { pageIndex = min(pageIndex + 1, pages.count - 1) }
+            Button("Get Started") { pageIndex = firstIncompletePageIndex() }
                 .buttonStyle(.glassProminent)
                 .controlSize(.large)
         }
@@ -263,10 +282,13 @@ struct OnboardingView: View {
         return blocking.rawValue > step.rawValue
     }
 
-    private func autoAdvance(readiness: SetupReadiness) {
-        guard let expectedStep = currentPage.setupStep else { return }
-        guard readiness.blockingStep != expectedStep else { return }
-        pageIndex = min(pageIndex + 1, pages.count - 1)
+    /// Where "Get Started" and a manually-reopened assistant should land: the first page whose
+    /// step isn't satisfied yet, or the done page when everything already is.
+    private func firstIncompletePageIndex() -> Int {
+        for index in pages.indices where index > 0 {
+            if let step = pages[index].setupStep, !isStepSatisfied(step) { return index }
+        }
+        return pages.count - 1
     }
 
     private func openLoginItemsSettings() {

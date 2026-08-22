@@ -28,6 +28,13 @@ public struct ScheduledPlaybackAction: Equatable {
 }
 
 public enum LayeredPlaybackPlanner {
+    /// Minimum gap enforced between a physical key's release and its next press. Both key
+    /// injectors ref-count presses on the same physical key so overlapping chords don't cut a
+    /// still-held note early; without this gap, two notes that legitimately re-strike the same
+    /// physical key back-to-back would never see a release in between and the second note would
+    /// be silently swallowed in-game.
+    private static let restrikeSeparation: TimeInterval = 0.008
+
     public static func plan(chords: [PlayableChord], settings rawSettings: PlaybackSettings) -> [ScheduledPlaybackAction] {
         let settings = rawSettings.clamped()
         let chords = chords.filter { !$0.strokes.isEmpty }.sorted {
@@ -40,6 +47,8 @@ public enum LayeredPlaybackPlanner {
         let starts = chords.map {
             settings.countdownDuration + ($0.startTime / settings.tempoMultiplier) + $0.playbackOffset
         }
+        var lastKeyDownTime: [KeyboardKey: TimeInterval] = [:]
+        var lastKeyUpActionIndex: [KeyboardKey: Int] = [:]
 
         for index in chords.indices {
             let chord = chords[index]
@@ -71,6 +80,14 @@ public enum LayeredPlaybackPlanner {
                     requestedDuration = settings.tapDuration
                 }
                 let up = min(down + requestedDuration, endLimit)
+                let physicalKey = stroke.key.keyboardKey
+
+                if let previousUpIndex = lastKeyUpActionIndex[physicalKey],
+                   actions[previousUpIndex].time >= down {
+                    let previousDown = lastKeyDownTime[physicalKey] ?? actions[previousUpIndex].time
+                    actions[previousUpIndex].time = max(previousDown, down - restrikeSeparation)
+                }
+
                 actions.append(
                     ScheduledPlaybackAction(
                         time: down,
@@ -85,6 +102,8 @@ public enum LayeredPlaybackPlanner {
                         kind: .key(stroke.key, keyEventModifier: keyModifier, keyDown: false)
                     )
                 )
+                lastKeyDownTime[physicalKey] = down
+                lastKeyUpActionIndex[physicalKey] = actions.count - 1
             }
         }
 
@@ -310,18 +329,45 @@ public final class EventScheduler {
             return
         }
 
+        // The planner only emits `.progress` at chord onsets, so a long silent stretch in the
+        // source file would otherwise leave the playhead frozen even though playback is fine.
+        // `onTick` below fills those gaps with elapsed-time estimates; this filter guarantees
+        // the exact onset values from the planner and the estimated tick values never make the
+        // reported position move backwards.
+        var lastReportedProgress = -TimeInterval.greatestFiniteMagnitude
+        func reportProgress(_ time: TimeInterval) {
+            guard time > lastReportedProgress else { return }
+            lastReportedProgress = time
+            onProgress(time)
+        }
+        func onTick(_ time: TimeInterval) { reportProgress(time) }
+
         var enteredPlaying = settings.countdownDuration <= 0
         if enteredPlaying { onStateChange(.playing) }
         for action in actions {
             if !enteredPlaying, action.time >= settings.countdownDuration {
-                guard wait(until: settings.countdownDuration, startNanos: startNanos, runID: runID) else {
+                guard wait(
+                    until: settings.countdownDuration,
+                    startNanos: startNanos,
+                    runID: runID,
+                    countdownDuration: settings.countdownDuration,
+                    tempoMultiplier: settings.tempoMultiplier,
+                    onTick: onTick
+                ) else {
                     finishStopped(injector: injector, onStateChange: onStateChange, onFinish: onFinish)
                     return
                 }
                 enteredPlaying = true
                 onStateChange(.playing)
             }
-            guard wait(until: action.time, startNanos: startNanos, runID: runID) else {
+            guard wait(
+                until: action.time,
+                startNanos: startNanos,
+                runID: runID,
+                countdownDuration: settings.countdownDuration,
+                tempoMultiplier: settings.tempoMultiplier,
+                onTick: onTick
+            ) else {
                 finishStopped(injector: injector, onStateChange: onStateChange, onFinish: onFinish)
                 return
             }
@@ -339,7 +385,7 @@ public final class EventScheduler {
             case let .preview(entry):
                 injector.recordPreview(entry)
             case let .progress(time):
-                onProgress(time)
+                reportProgress(time)
             }
         }
         injector.releaseAll()
@@ -357,8 +403,17 @@ public final class EventScheduler {
         onFinish(.stopped)
     }
 
-    private func wait(until seconds: TimeInterval, startNanos: UInt64, runID: UUID) -> Bool {
+    private func wait(
+        until seconds: TimeInterval,
+        startNanos: UInt64,
+        runID: UUID,
+        countdownDuration: TimeInterval = 0,
+        tempoMultiplier: Double = 1,
+        onTick: ((TimeInterval) -> Void)? = nil
+    ) -> Bool {
         let targetOffset = UInt64(max(0, seconds) * 1_000_000_000)
+        let tickIntervalNanos: UInt64 = 50_000_000
+        var lastTickNanos: UInt64?
         while true {
             lock.lock()
             let valid = !stopped && currentRunID == runID
@@ -370,8 +425,17 @@ public final class EventScheduler {
                 Thread.sleep(forTimeInterval: 0.005)
                 continue
             }
-            let target = startNanos + targetOffset + debt
             let now = DispatchTime.now().uptimeNanoseconds
+            if let onTick {
+                let elapsedNanos = now > startNanos + debt ? now - (startNanos + debt) : 0
+                if lastTickNanos == nil || elapsedNanos >= lastTickNanos! + tickIntervalNanos {
+                    lastTickNanos = elapsedNanos
+                    let elapsedSeconds = TimeInterval(elapsedNanos) / 1_000_000_000
+                    let musicTime = max(0, elapsedSeconds - countdownDuration) * tempoMultiplier
+                    onTick(musicTime)
+                }
+            }
+            let target = startNanos + targetOffset + debt
             if now >= target { return true }
             Thread.sleep(forTimeInterval: min(max(TimeInterval(target - now) / 1_000_000_000, 0.001), 0.005))
         }

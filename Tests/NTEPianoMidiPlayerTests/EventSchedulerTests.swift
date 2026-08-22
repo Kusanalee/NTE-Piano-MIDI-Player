@@ -169,6 +169,71 @@ final class EventSchedulerTests: XCTestCase {
         XCTAssertEqual(modifierActions(actions, .control, false).count, 1)
     }
 
+    func testReStruckSamePhysicalKeySeparatesReleaseFromNextPress() throws {
+        var settings = PlaybackSettings(layoutMode: .nte36Chromatic, baseMidiNoteForBAS1: 48)
+        settings.countdownDuration = 0
+        let chords = try [
+            chord(note: 48, start: 0.00, layer: .natural, settings: settings),
+            chord(note: 48, start: 0.02, layer: .natural, settings: settings)
+        ]
+        let actions = LayeredPlaybackPlanner.plan(chords: chords, settings: settings)
+        let downs = keyActions(actions, keyDown: true).map(\.time).sorted()
+        let ups = keyActions(actions, keyDown: false).map(\.time).sorted()
+
+        XCTAssertEqual(downs, [0.00, 0.02])
+        XCTAssertEqual(ups.count, 2)
+        // Without the fix the first key-up lands at 0.032 (start + tapDuration), after the
+        // second key-down at 0.02 -- the ref-counted injectors would then never see a release
+        // in between and the second note would be swallowed. The planner must pull it back to
+        // at least `restrikeSeparation` before the next press.
+        XCTAssertLessThanOrEqual(ups[0], downs[1])
+        XCTAssertEqual(ups[0], 0.012, accuracy: 0.000_001)
+    }
+
+    func testSchedulerReportsProgressTicksThroughASilentGap() throws {
+        var settings = PlaybackSettings(layoutMode: .nte36Chromatic, baseMidiNoteForBAS1: 48)
+        settings.countdownDuration = 0
+        let chords = try [
+            chord(note: 48, start: 0.0, layer: .natural, settings: settings),
+            chord(note: 50, start: 0.3, layer: .natural, settings: settings)
+        ]
+
+        let injector = CGEventKeyInjector(previewMode: true, eventPoster: RecordingLayerEventPoster())
+        let scheduler = EventScheduler()
+        let finished = expectation(description: "playback finished")
+        let progressLock = NSLock()
+        var progressValues: [TimeInterval] = []
+
+        scheduler.start(
+            chords: chords,
+            settings: settings,
+            injector: injector,
+            frontmostGuard: { true },
+            onStateChange: { _ in },
+            onProgress: { time in
+                progressLock.lock()
+                progressValues.append(time)
+                progressLock.unlock()
+            },
+            onFinish: { _ in finished.fulfill() }
+        )
+
+        wait(for: [finished], timeout: 3.0)
+
+        progressLock.lock()
+        let values = progressValues
+        progressLock.unlock()
+
+        XCTAssertFalse(values.isEmpty)
+        XCTAssertEqual(values, values.sorted(), "progress must never move backwards")
+        XCTAssertLessThanOrEqual(values.first ?? .greatestFiniteMagnitude, 0.01)
+        XCTAssertGreaterThanOrEqual(values.last ?? -1, 0.25)
+        XCTAssertTrue(
+            values.contains { $0 > 0.05 && $0 < 0.25 },
+            "expected at least one tick strictly between the two chord onsets, got \(values)"
+        )
+    }
+
     private func actions(notes: [Int], settings: PlaybackSettings) -> [ScheduledPlaybackAction] {
         let result = UniversalMidiArranger(layoutMode: settings.layoutMode).arrange(
             events: notes.map { note($0) },

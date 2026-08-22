@@ -1,10 +1,18 @@
 import Foundation
 
 public final class VirtualHIDKeyInjector: KeyInjecting, @unchecked Sendable {
+    /// A run stops only after this many consecutive failed sends, so a single transient socket
+    /// hiccup (or one lost heartbeat) doesn't abort a whole song.
+    private static let maxConsecutiveFailures = 3
+
     public var previewMode: Bool
     public private(set) var previewLog: [String] = []
     public private(set) var reportTrace: [String] = []
     public var onFailure: ((String) -> Void)?
+    /// Fires after a send recovers following one or more failures. Informational only — it
+    /// never resumes or restarts playback, it just lets the UI reflect that the bridge is
+    /// healthy again.
+    public var onRecovered: ((String) -> Void)?
 
     private let transport: VirtualHIDReportTransport
     private let stateLock = NSLock()
@@ -15,6 +23,11 @@ public final class VirtualHIDKeyInjector: KeyInjecting, @unchecked Sendable {
     private var heldKeyCounts: [KeyboardKey: Int] = [:]
     private var heldModifiers: Set<KeyModifier> = []
     private var failureReported = false
+    private var consecutiveFailures = 0
+    /// Press order for currently-held keys, used to keep the newest keys when more than
+    /// `VirtualHIDConstants.maximumKeys` are held at once instead of failing the report.
+    private var pressSequence: UInt64 = 0
+    private var heldKeyOrder: [KeyboardKey: UInt64] = [:]
 
     public init(previewMode: Bool = true, transport: VirtualHIDReportTransport = VirtualHIDSocketClient()) {
         self.previewMode = previewMode
@@ -88,11 +101,16 @@ public final class VirtualHIDKeyInjector: KeyInjecting, @unchecked Sendable {
         if keyDown {
             heldKeyCounts[key.keyboardKey] = count + 1
             changed = count == 0
+            if changed {
+                pressSequence &+= 1
+                heldKeyOrder[key.keyboardKey] = pressSequence
+            }
         } else if count > 1 {
             heldKeyCounts[key.keyboardKey] = count - 1
             changed = false
         } else {
             heldKeyCounts.removeValue(forKey: key.keyboardKey)
+            heldKeyOrder.removeValue(forKey: key.keyboardKey)
             changed = count == 1
         }
         stateLock.unlock()
@@ -143,6 +161,7 @@ public final class VirtualHIDKeyInjector: KeyInjecting, @unchecked Sendable {
     public func releaseAll() {
         stateLock.lock()
         heldKeyCounts.removeAll()
+        heldKeyOrder.removeAll()
         heldModifiers.removeAll()
         stateLock.unlock()
         stopHeartbeat()
@@ -158,24 +177,64 @@ public final class VirtualHIDKeyInjector: KeyInjecting, @unchecked Sendable {
     private func sendCurrentReport() {
         let report: VirtualHIDKeyboardReport
         stateLock.lock()
-        let keys = heldKeyCounts.keys.sorted { $0.rawValue < $1.rawValue }
+        let allHeldKeys = Array(heldKeyCounts.keys)
+        let keys: [KeyboardKey]
+        let droppedCount: Int
+        if allHeldKeys.count > VirtualHIDConstants.maximumKeys {
+            let order = heldKeyOrder
+            let newest = allHeldKeys
+                .sorted { (order[$0] ?? 0) > (order[$1] ?? 0) }
+                .prefix(VirtualHIDConstants.maximumKeys)
+            keys = Array(newest).sorted { $0.rawValue < $1.rawValue }
+            droppedCount = allHeldKeys.count - keys.count
+        } else {
+            keys = allHeldKeys.sorted { $0.rawValue < $1.rawValue }
+            droppedCount = 0
+        }
         var modifiers: VirtualHIDModifiers = []
         if heldModifiers.contains(.shift) { modifiers.insert(.leftShift) }
         if heldModifiers.contains(.control) { modifiers.insert(.leftControl) }
         stateLock.unlock()
 
         do {
+            // `keys` is already capped at VirtualHIDConstants.maximumKeys above, so this can't
+            // throw .tooManyKeys.
             report = try VirtualHIDKeyboardReport(modifiers: modifiers, keys: keys.map(\.hidUsage))
-            try transport.send(report: report)
-            stateLock.lock()
-            failureReported = false
-            stateLock.unlock()
-            appendTrace(Self.traceLine(for: report, keyboardKeys: keys))
+            let recoveredOnRetry = try sendReportWithRetry(report)
+            handleSendSuccess(recoveredOnRetry: recoveredOnRetry)
+            var traceLine = Self.traceLine(for: report, keyboardKeys: keys)
+            if droppedCount > 0 { traceLine += " dropped=\(droppedCount) (over the \(VirtualHIDConstants.maximumKeys)-key limit)" }
+            appendTrace(traceLine)
             if report.isEmpty { stopHeartbeat() } else { startHeartbeatIfNeeded() }
         } catch {
             stopHeartbeat()
             reportFailure(error)
         }
+    }
+
+    /// One retry on send failure — `VirtualHIDSocketClient` reconnects on demand when its
+    /// descriptor was closed by a prior error, so this gives a transient socket hiccup a real
+    /// chance to recover before it's counted toward the consecutive-failure threshold. Returns
+    /// whether the retry was the one that succeeded; throws only when both attempts fail.
+    private func sendReportWithRetry(_ report: VirtualHIDKeyboardReport) throws -> Bool {
+        do {
+            try transport.send(report: report)
+            return false
+        } catch {
+            try transport.send(report: report)
+            return true
+        }
+    }
+
+    private func handleSendSuccess(recoveredOnRetry: Bool) {
+        stateLock.lock()
+        let hadPriorFailures = consecutiveFailures > 0
+        consecutiveFailures = 0
+        failureReported = false
+        stateLock.unlock()
+        guard recoveredOnRetry || hadPriorFailures else { return }
+        appendTrace("RECOVERED after a transient VirtualHID failure")
+        onRecovered?("The NTE VirtualHID bridge recovered.")
     }
 
     private func startHeartbeatIfNeeded() {
@@ -188,8 +247,12 @@ public final class VirtualHIDKeyInjector: KeyInjecting, @unchecked Sendable {
                 do {
                     try self.transport.sendHeartbeat()
                 } catch {
+                    // A missed heartbeat alone never stops playback: it's just a keep-alive, and
+                    // the next key report will reconnect and restart the heartbeat if the
+                    // connection actually dropped.
                     self.stopHeartbeatFromQueue()
-                    self.reportFailure(error)
+                    let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    self.appendTrace("heartbeat failed, will retry on next report: \(message)")
                 }
             }
             heartbeatTimer = timer
@@ -213,13 +276,36 @@ public final class VirtualHIDKeyInjector: KeyInjecting, @unchecked Sendable {
 
     private func reportFailure(_ error: Error) {
         stateLock.lock()
+        consecutiveFailures += 1
+        let failures = consecutiveFailures
+        stateLock.unlock()
+
+        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+
+        // A single failed send (or one missed retry) doesn't stop playback -- it's logged
+        // and the run keeps going, since the very next report often succeeds on its own. Only a
+        // run of consecutive failures, or a status that can never self-heal mid-run, is fatal.
+        guard failures >= Self.maxConsecutiveFailures || isHardBlockedStatus else {
+            appendTrace("WARNING \(message) (attempt \(failures)/\(Self.maxConsecutiveFailures))")
+            return
+        }
+
+        stateLock.lock()
         let shouldReport = !failureReported
         failureReported = true
         stateLock.unlock()
         guard shouldReport else { return }
-        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         appendTrace("ERROR \(message)")
         onFailure?(message)
+    }
+
+    private var isHardBlockedStatus: Bool {
+        switch transport.status {
+        case .notInstalled, .driverInactive, .versionMismatch:
+            true
+        default:
+            false
+        }
     }
 
     private func appendTrace(_ line: String) {

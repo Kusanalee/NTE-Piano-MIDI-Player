@@ -22,6 +22,7 @@ struct SettingsView: View {
         .frame(width: 560, height: 520)
         .onAppear { viewModel.startReadinessPolling() }
         .onDisappear { viewModel.stopReadinessPolling() }
+        .preferredColorScheme(settingsStore.settings.themePreference.colorScheme)
     }
 }
 
@@ -61,6 +62,17 @@ private struct GeneralSettingsTab: View {
             }
 
             Section("Setup") {
+                Picker(
+                    "Key layout",
+                    selection: Binding(
+                        get: { settingsStore.settings.layoutMode },
+                        set: { viewModel.setLayoutMode($0) }
+                    )
+                ) {
+                    ForEach(LayoutMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
                 Label(readinessTitle, systemImage: viewModel.readiness.isReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(viewModel.readiness.isReady ? .green : .orange)
                 if let detail = viewModel.readiness.detail {
@@ -121,11 +133,6 @@ private struct AdvancedSettingsTab: View {
     var body: some View {
         Form {
             Section("Layout and Range") {
-                Picker("Layout", selection: binding(\.layoutMode)) {
-                    ForEach(LayoutMode.allCases) { mode in
-                        Text(mode.displayName).tag(mode)
-                    }
-                }
                 Picker("Arrangement", selection: binding(\.arrangementMode)) {
                     ForEach(ArrangementMode.allCases) { mode in
                         Text(mode.displayName).tag(mode)

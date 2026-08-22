@@ -113,7 +113,21 @@ public struct UniversalMidiArranger {
                     settings: settings
                 ))
             }
-            let selected = selectAdaptiveSequence(candidates)
+            // A chord with no viable layer plan (e.g. it needs more time to switch layers than
+            // is available before the next chord) must not discard every chord after it. Drop
+            // just that chord from the sequence the DP considers, and count its notes as
+            // skipped, instead of treating one bad chord as reason to stop arranging the rest
+            // of the piece.
+            var playableCandidates: [[AdaptiveCandidate]] = []
+            playableCandidates.reserveCapacity(candidates.count)
+            for (index, candidateList) in candidates.enumerated() {
+                if candidateList.isEmpty {
+                    diagnostics.notesSkipped += groups[index].notes.count
+                } else {
+                    playableCandidates.append(candidateList)
+                }
+            }
+            let selected = selectAdaptiveSequence(playableCandidates)
             chords.reserveCapacity(selected.reduce(0) { $0 + $1.packets.count })
             for candidate in selected {
                 diagnostics.collisionNotesMerged += candidate.collisionCount

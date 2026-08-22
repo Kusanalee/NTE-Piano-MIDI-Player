@@ -43,6 +43,7 @@ struct ContentView: View {
         ScrollView {
             VStack(spacing: 16) {
                 FileSummaryView(viewModel: viewModel, isDropTarget: $isDropTarget)
+                PlaybackModeView(viewModel: viewModel)
                 ScrubberView(viewModel: viewModel)
                 TrackListView(viewModel: viewModel)
                     .frame(minHeight: 260)
@@ -129,7 +130,12 @@ struct ContentView: View {
         switch viewModel.playbackState {
         case .idle: viewModel.document == nil ? "Open a MIDI file" : "Ready"
         case .countingDown: "Get ready\u{2026}"
-        case .playing: "Playing"
+        case .playing:
+            if let silence = viewModel.upcomingSilence {
+                "Silent until \(viewModel.formatTime(silence.nextOnset)) \u{00b7} \(Int(silence.remaining))s"
+            } else {
+                "Playing"
+            }
         case .paused: "Paused"
         case .stopped: "Stopped"
         case .completed: "Finished"
@@ -141,7 +147,7 @@ struct ContentView: View {
         switch viewModel.playbackState {
         case .idle: viewModel.document == nil ? "tray" : "checkmark.circle"
         case .countingDown: "timer"
-        case .playing: "play.circle.fill"
+        case .playing: viewModel.upcomingSilence != nil ? "hourglass" : "play.circle.fill"
         case .paused: "pause.circle"
         case .stopped: "stop.circle"
         case .completed: "checkmark.circle.fill"
@@ -158,7 +164,7 @@ struct ContentView: View {
     }
 }
 
-private extension ThemePreference {
+extension ThemePreference {
     var colorScheme: ColorScheme? {
         switch self {
         case .system: nil
@@ -226,6 +232,64 @@ private struct FileSummaryView: View {
             }
         }
         return true
+    }
+}
+
+private struct PlaybackModeView: View {
+    @ObservedObject var viewModel: AppViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker(
+                "Key layout",
+                selection: Binding(
+                    get: { viewModel.settingsStore.settings.layoutMode },
+                    set: { viewModel.setLayoutMode($0) }
+                )
+            ) {
+                ForEach(LayoutMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(isPlaybackActive)
+
+            Text(modeDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !viewModel.readiness.isReady {
+                HStack {
+                    Label(
+                        viewModel.readiness.blockingStep?.title ?? "Setup needed",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    Spacer()
+                    Button("Set Up\u{2026}") { viewModel.showingOnboarding = true }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+        .padding(12)
+        .glassPanel(cornerRadius: 10, opacity: viewModel.settingsStore.settings.glassOpacity)
+    }
+
+    private var isPlaybackActive: Bool {
+        viewModel.playbackState == .playing || viewModel.playbackState == .countingDown
+    }
+
+    private var modeDescription: String {
+        switch viewModel.settingsStore.settings.layoutMode {
+        case .nte36Chromatic:
+            "Plays sharps and flats. Needs the Karabiner VirtualHID driver."
+        case .nte21Natural:
+            "Plays natural notes only. Needs Accessibility permission."
+        }
     }
 }
 

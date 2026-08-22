@@ -53,6 +53,7 @@ final class AppViewModel: ObservableObject {
     private var countdownTimer: Timer?
     private var countdownEndDate: Date?
     private var hasResolvedInitialOnboarding = false
+    private var appliedTheme: ThemePreference?
 
     /// Bump when onboarding needs to run again for existing users (e.g. a new required step).
     static let currentOnboardingVersion = 1
@@ -72,13 +73,40 @@ final class AppViewModel: ObservableObject {
                 self.statusMessage = "VirtualHID playback stopped: \(message)"
             }
         }
+        virtualHIDInjector.onRecovered = { [weak self] message in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.virtualHIDStatus = self.virtualHIDInjector.connectionStatus
+                self.virtualHIDReportTraceText = self.formattedVirtualHIDReportTrace()
+                self.statusMessage = "VirtualHID recovered: \(message)"
+            }
+        }
         settingsCancellable = settingsStore.settingsPublisher.sink { [weak self] _ in
             Task { @MainActor in
                 self?.refreshMapping()
+                self?.applyThemePreference()
             }
         }
         refreshVirtualHIDStatus()
         refreshReadiness()
+        applyThemePreference()
+    }
+
+    /// Applies the theme preference to the whole app, not just the SwiftUI environment of the
+    /// main window. `preferredColorScheme` only affects the view hierarchy it's attached to, so
+    /// the Settings window, `NSOpenPanel`, and other AppKit chrome need this instead.
+    private func applyThemePreference() {
+        let theme = settingsStore.settings.themePreference
+        guard theme != appliedTheme else { return }
+        appliedTheme = theme
+        switch theme {
+        case .system:
+            NSApplication.shared.appearance = nil
+        case .light:
+            NSApplication.shared.appearance = NSAppearance(named: .aqua)
+        case .dark:
+            NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+        }
     }
 
     var duration: TimeInterval {
@@ -88,6 +116,19 @@ final class AppViewModel: ObservableObject {
     var progressFraction: Double {
         guard duration > 0 else { return 0 }
         return min(max(progressTime / duration, 0), 1)
+    }
+
+    /// Non-nil while playing and the next playable onset is more than a few seconds away, so the
+    /// UI can tell a long silent passage in the source file apart from a stall.
+    var upcomingSilence: (nextOnset: TimeInterval, remaining: TimeInterval)? {
+        guard playbackState == .playing else { return nil }
+        guard let nextOnset = playableChords
+            .map(\.startTime)
+            .filter({ $0 > progressTime })
+            .min() else { return nil }
+        let remaining = nextOnset - progressTime
+        guard remaining > 3 else { return nil }
+        return (nextOnset, remaining)
     }
 
     var filteredTrackIndices: [Int] {
@@ -464,7 +505,14 @@ final class AppViewModel: ObservableObject {
     }
 
     func skipToTwentyOneKey() {
-        settingsStore.settings.layoutMode = .nte21Natural
+        setLayoutMode(.nte21Natural)
+    }
+
+    /// Switches the active key layout. The two layouts use different input backends (VirtualHID vs.
+    /// Accessibility) with different setup requirements, so this always re-checks readiness.
+    func setLayoutMode(_ mode: LayoutMode) {
+        guard settingsStore.settings.layoutMode != mode else { return }
+        settingsStore.settings.layoutMode = mode
         refreshReadiness()
     }
 

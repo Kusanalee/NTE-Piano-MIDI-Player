@@ -10,6 +10,10 @@ struct TrackListView: View {
                 TextField("Filter tracks", text: $viewModel.searchText)
                     .textFieldStyle(.roundedBorder)
 
+                Text("Mute silences a track. Solo plays only soloed tracks, even if unchecked. Mute overrides Solo.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 if viewModel.tracks.isEmpty {
                     Text("Open a MIDI file to inspect tracks.")
                         .foregroundStyle(.secondary)
@@ -45,14 +49,14 @@ struct TrackListView: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Toggle("M", isOn: trackBinding(index, \.isMuted))
+                Toggle("Mute", isOn: trackBinding(index, \.isMuted))
                     .toggleStyle(.button)
                     .controlSize(.small)
-                    .help("Mute")
-                Toggle("S", isOn: trackBinding(index, \.isSoloed))
+                    .help("Silence this track. A muted track does not play, even when soloed.")
+                Toggle("Solo", isOn: trackBinding(index, \.isSoloed))
                     .toggleStyle(.button)
                     .controlSize(.small)
-                    .help("Solo")
+                    .help("Play only soloed tracks, even if they are unchecked. If no track is soloed, all enabled, unmuted tracks play.")
             }
         }
         .padding(.vertical, 4)

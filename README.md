@@ -51,15 +51,19 @@ Demo videos and screenshots are for illustrative purposes only and may not refle
 
 ### 21-key natural mode — in-game demo
 
-[![Play the 21-key natural mode in-game demo](docs/assets/demo-21-key.jpg)](https://github.com/user-attachments/assets/6fa1433e-bdae-4f38-a48a-de1f5a2a7db3)
-
-[Watch the 21-key demo with audio](https://github.com/user-attachments/assets/6fa1433e-bdae-4f38-a48a-de1f5a2a7db3)
+<p>
+  <a href="https://github.com/user-attachments/assets/6fa1433e-bdae-4f38-a48a-de1f5a2a7db3">
+    <img src="docs/assets/demo-21-key.jpg" alt="Play the 21-key natural mode in-game demo">
+  </a>
+</p>
 
 ### 36-key chromatic mode — in-game demo
 
-[![Play the 36-key chromatic mode in-game demo](docs/assets/demo-36-key.jpg)](https://github.com/user-attachments/assets/2521ef8e-53aa-4931-8e45-697657d7a3ea)
-
-[Watch the 36-key demo with audio](https://github.com/user-attachments/assets/2521ef8e-53aa-4931-8e45-697657d7a3ea)
+<p>
+  <a href="https://github.com/user-attachments/assets/2521ef8e-53aa-4931-8e45-697657d7a3ea">
+    <img src="docs/assets/demo-36-key.jpg" alt="Play the 36-key chromatic mode in-game demo">
+  </a>
+</p>
 
 ## Why 36-key mode needs VirtualHID
 

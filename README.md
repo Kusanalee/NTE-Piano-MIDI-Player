@@ -1,35 +1,193 @@
 # NTE Piano MIDI Player
 
-NTE Piano MIDI Player is a native macOS MIDI-to-keyboard player for the in-game piano in Neverness to Everness (NTE). It loads Standard MIDI files, arranges them for NTE's limited physical keyboard, and either previews or posts the resulting key chords through the layout's supported macOS input backend.
+<p align="center">
+  <img src="Resources/AppIcon.svg" width="144" alt="NTE Piano MIDI Player icon">
+</p>
 
-The project is an original SwiftUI implementation. It does not read game memory, bypass anti-cheat, or hide its input automation.
+NTE Piano MIDI Player is a native macOS app that turns Standard MIDI files into keyboard input for the in-game piano in Neverness to Everness (NTE). It is built in Swift and SwiftUI, supports NTE's 21-key natural and 36-key chromatic layouts, and can preview a song before sending any input to the game.
 
-## Requirements
+**Requires macOS 26.0 or later.**
 
-- macOS 26 or newer
-- Xcode with the macOS SDK, to build from source
-- Accessibility permission for 21-key live playback (the app's Setup Assistant asks for this when needed)
-- Karabiner DriverKit VirtualHIDDevice 8.2.0 (or a compatible Karabiner-Elements install) for 36-key live playback — the Setup Assistant walks you through installing it and can set up the background services itself with one administrator prompt
+![NTE Piano MIDI Player with a MIDI file loaded](docs/assets/app-screenshot.png)
 
-Preview Mode, MIDI inspection, Listen/Speaker Playback, and sheet export do not request Accessibility access.
+> [!NOTE]
+> I do not have a background in music theory. If something sounds off, it may be a limitation of NTE's available piano range, a MIDI file that is too complex to reduce cleanly, or a mapping issue in the app. Issues and pull requests are welcome.
 
-## Develop and test
+## Download and install
 
-Open `NTEPianoMidiPlayer.xcodeproj` in Xcode and use the shared `NTEPianoMidiPlayer` macOS scheme. The scheme builds the app, `NTEPianoMidiPlayerCore` framework, and unit tests.
+NTE Piano MIDI Player is distributed as an unsigned and unnotarized app.
 
-Clone with submodules, or initialize the pinned dependency before building:
+1. Download the latest `NTE-Piano-MIDI-Player-macOS-unsigned.zip` from [GitHub Releases](https://github.com/Kusanalee/NTE-Piano-MIDI-Player/releases/latest).
+2. Unzip it and move **NTE Piano MIDI Player.app** to `/Applications`.
+3. Try to open the app once.
+4. If macOS blocks it, open **System Settings → Privacy & Security**, find the message about NTE Piano MIDI Player, and select **Open Anyway**.
+
+If Gatekeeper still reports that the app is damaged or cannot be opened, remove the quarantine attribute in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/NTE Piano MIDI Player.app"
+open "/Applications/NTE Piano MIDI Player.app"
+```
+
+Only use that command for a copy downloaded from this repository's official Releases page or built locally from source you reviewed. If the app is somewhere other than `/Applications`, update both paths.
+
+## Quick start
+
+The Setup Assistant opens on first launch and can be run again from **Help → Setup Assistant**.
+
+1. Choose whether to set up 36-key chromatic playback or skip the driver and use 21-key natural playback.
+2. Open or drag a `.mid` or `.midi` file into the app.
+3. Use **Listen** if you want to hear the original MIDI through your speakers first.
+4. Press **Play**.
+5. During the countdown, switch to NTE and open the in-game piano.
+
+Track enable, mute, solo, and Listen controls stay on the main window. Arrangement mode, transpose, layout, timing, manual key mapping, Preview Mode, and diagnostics are available under **Settings → Enable Advanced Developer Settings**.
+
+Preview Mode performs the complete arrangement without sending keyboard input, which is useful for checking a complex or input-heavy file before using it in-game.
+
+## Demo videos
+
+Demo videos and screenshots are for illustrative purposes only and may not reflect the latest version of the application.
+
+### 21-key natural mode — in-game demo
+
+<p>
+  <a href="https://github.com/user-attachments/assets/6fa1433e-bdae-4f38-a48a-de1f5a2a7db3">
+    <img src="docs/assets/demo-21-key.jpg" alt="Play the 21-key natural mode in-game demo">
+  </a>
+</p>
+
+### 36-key chromatic mode — in-game demo
+
+<p>
+  <a href="https://github.com/user-attachments/assets/2521ef8e-53aa-4931-8e45-697657d7a3ea">
+    <img src="docs/assets/demo-36-key.jpg" alt="Play the 36-key chromatic mode in-game demo">
+  </a>
+</p>
+
+## Why 36-key mode needs VirtualHID
+
+NTE's 21-key layout uses only the 21 letter keys, so the app can send those through macOS's Quartz/CoreGraphics input system after you grant Accessibility permission.
+
+The 36-key layout adds sharp and flat layers controlled by left Shift and left Control. NTE does not reliably accept the synthetic modifier state normally sent by macOS apps, so Quartz alone cannot reproduce that layout correctly. For 36-key playback, NTE Piano MIDI Player sends complete hardware-style keyboard reports through Karabiner's DriverKit VirtualHIDDevice and the app's authenticated local bridge.
+
+Either of these installations is supported:
+
+- the standalone [Karabiner DriverKit VirtualHIDDevice package 8.2.0](https://github.com/pqrs-org/Karabiner-DriverKit-VirtualHIDDevice/releases/tag/v8.2.0), which contains driver 1.8.0; or
+- a compatible full [Karabiner-Elements](https://karabiner-elements.pqrs.org/) installation containing the same VirtualHID driver.
+
+The Setup Assistant detects either installation, activates the extension, and can install the required background services with one administrator prompt. It does not replace or modify an existing Karabiner-Elements service. You can remove only this app's helper services later from **Settings → General → Setup**.
+
+The bridge runs with elevated privileges because the upstream driver requires it, but it accepts only one authenticated local user and only the 21 piano letters, left Shift, and left Control. It releases the virtual keyboard on disconnect or heartbeat timeout. There is no silent Quartz fallback when 36-key VirtualHID is unavailable.
+
+### Playback requirements
+
+| Mode | Runtime requirement | Notes |
+| --- | --- | --- |
+| 21-key natural | Accessibility permission | Uses Quartz/CoreGraphics and does not require VirtualHID. |
+| 36-key chromatic | VirtualHID package 8.2.0 / driver 1.8.0, or compatible Karabiner-Elements | Uses hardware-style letter and modifier reports. Accessibility is not required for playback itself. |
+| Preview, MIDI inspection, Listen, and sheet export | None of the above | These features do not send input to NTE. |
+
+## Features and limitations
+
+### Features
+
+- Automatic best-effort arrangement for NTE's limited range and input budget
+- 21-key natural and 36-key chromatic layouts
+- Track search, enable, mute, and solo controls
+- Speaker preview through `AVMIDIPlayer`
+- Configurable countdown, tempo, appearance, and Liquid Glass opacity
+- Pause, resume, progress, keyboard preview, and range diagnostics
+- Manual keyboard remapping and modifier calibration
+- Piano-sheet export with note names, degrees, key labels, wrapping, and chord brackets
+- Persistent settings and recent files
+
+### Arrangement behavior
+
+**Automatic** is the default. It applies tempo and sustain information, omits General MIDI percussion channel 10, groups nearby onsets into chords, evaluates bounded transpositions, fits wide ranges by octave, and reduces notes that cannot fit NTE's physical or timing limits. In 36-key mode it can roll a slow cross-layer chord exactly when there is enough time; otherwise it keeps higher-priority exact notes and omits incompatible tones rather than moving them by a semitone.
+
+**Original** is a diagnostic comparison path. It retains the selected tracks, including channel 10, and bypasses automatic global fitting and musical reduction where possible. It must still obey the chosen NTE layout, range, layer, collision, and simultaneous-key limits because the game cannot reproduce impossible input.
+
+### NTE keyboard layouts
+
+All three rows use the same seven physical positions:
+
+| Row | Keys |
+| --- | --- |
+| TRE | `QWERTYU` |
+| MID | `ASDFGHJ` |
+| BAS | `ZXCVBNM` |
+
+The 21-key layout assigns C, D, E, F, G, A, and B to each row without modifiers.
+
+The 36-key layout adds these layers:
+
+| Layer | Notes on each row |
+| --- | --- |
+| No modifier | C, D, E, F, G, A, B |
+| Left Shift | C#, D, E, F#, G#, A, B |
+| Left Control | C, D, Eb, F, G, A, Bb |
+
+The effective 36-key limit is six notes per source onset, including notes split across an exact roll. The scheduler releases letter keys before changing modifier layers and releases every held key on stop, focus loss, cancellation, completion, disconnect, or error.
+
+### Known limitations
+
+- NTE cannot reproduce arbitrary MIDI ranges, velocity dynamics, pitch bends, aftertouch, or every expression event.
+- Dense passages and cross-layer chords may be octave-folded, rolled, merged, deduplicated, or reduced.
+- A MIDI written for many instruments may need tracks disabled before it produces a useful solo-piano arrangement.
+- Live MIDI input, playlist polish, and a system-wide emergency hotkey are not currently supported.
+- Releases are unsigned and unnotarized, so macOS approval may be required after each download.
+
+## Platform support
+
+There are no plans to port NTE Piano MIDI Player to Windows, Linux, mobile devices, or consoles.
+
+Windows users can instead look at [Jed556/AutoMidiPlayer](https://github.com/Jed556/AutoMidiPlayer), a separate project that supports NTE and other in-game instruments.
+
+## Safety disclaimer
+
+**Can using this get an account penalized? The honest answer is uncertain. Use it at your own risk.**
+
+Automation may violate NTE's rules or terms, and no statement in this repository guarantees that using the app is permitted or undetectable. Listen to or preview a MIDI first, avoid files that spam excessive keyboard input, and enable only the tracks you actually need.
+
+The app does not read game memory, modify the game, bypass anti-cheat, or attempt to hide its input automation. That does not mean the game will consider it authorized. NTE's official privacy policy describes [data collected to prevent cheating and unauthorized software](https://static.pwsdk.com/nte/privacy/privacy.html), including monitoring for suspected unauthorized programs, files, and processes. Review that disclosure before deciding whether to use this or any other automation tool.
+
+Live playback is restricted to the configured foreground app names, which default to:
+
+- `NTE.app`
+- `NTE`
+- `Neverness to Everness`
+
+## Build from source
+
+### Requirements
+
+- macOS 26.0 or later
+- Git
+- Xcode with the macOS 26 SDK
+- The repository's recursive Git submodules
+
+Clone the repository and its pinned VirtualHID dependency:
+
+```sh
+git clone --recurse-submodules https://github.com/Kusanalee/NTE-Piano-MIDI-Player.git
+cd NTE-Piano-MIDI-Player
+```
+
+If you already cloned without submodules, initialize them with:
 
 ```sh
 git submodule update --init --recursive
 ```
 
-The equivalent command-line checks are:
+Open `NTEPianoMidiPlayer.xcodeproj` and use the shared **NTEPianoMidiPlayer** macOS scheme, or run the command-line checks:
 
 ```sh
 xcodebuild \
   -project NTEPianoMidiPlayer.xcodeproj \
   -scheme NTEPianoMidiPlayer \
   -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO \
   test
 
 xcodebuild \
@@ -41,161 +199,32 @@ xcodebuild \
   build
 ```
 
-## Build the unsigned app
-
-Run:
+To create the unsigned application and release ZIP:
 
 ```sh
 scripts/build_app.sh
 ```
 
-The script uses `xcodebuild` and writes:
+The packaging script writes:
 
 - `dist/NTE Piano MIDI Player.app`
 - `dist/NTE-Piano-MIDI-Player-macOS-unsigned.zip`
 
-The app is intentionally unsigned and not notarized. After downloading an official release, macOS may require:
+## Contributing
 
-```sh
-xattr -dr com.apple.quarantine "/Applications/NTE Piano MIDI Player.app"
-open "/Applications/NTE Piano MIDI Player.app"
-```
+Issues and pull requests are welcome, especially for note mapping, arrangement quality, MIDI compatibility, setup clarity, accessibility, and reproducible bugs.
 
-Only remove quarantine from a copy downloaded from the official repository or built locally from reviewed source. Some macOS versions may also require Open Anyway in Privacy & Security.
+When reporting a problem, include the layout and arrangement mode you used, the relevant diagnostics, and a small redistributable MIDI example when possible. Please do not commit copyrighted or private MIDI files without permission.
 
-## Basic use
+Before opening a pull request:
 
-On first launch, the Setup Assistant walks you through installing the virtual keyboard driver (or skipping it for 21-key natural mode) and, if you want 36-key playback, installs its background services with one administrator prompt. After that:
+1. Keep existing 21-key and 36-key behavior stable unless the change explicitly targets it.
+2. Add or update tests for behavior changes.
+3. Run the test suite, an unsigned Release build, and `git diff --check`.
+4. Describe what was tested automatically and what, if anything, was verified live in NTE.
 
-1. Open or drag in a `.mid` or `.midi` file.
-2. Press Play.
-3. When the countdown appears, switch to NTE and open the in-game piano before it reaches zero.
+## License
 
-That's the whole flow. Track enable/mute/solo and the Listen (speaker preview) button stay on the main window; everything else — arrangement mode, transpose, layout, timing, manual key remapping, and diagnostics — lives behind **Settings → Enable Advanced Developer Settings**, off by default so the app plays without asking you to understand any of it. Re-run the Setup Assistant any time from **Help → Setup Assistant** or the Settings General tab.
+NTE Piano MIDI Player is free software licensed under the [GNU General Public License v3.0](LICENSE).
 
-Preview Mode (available in Advanced settings) runs the complete arrangement without sending any input, for inspecting a file before you commit to a countdown.
-
-## 36-key VirtualHID setup
-
-NTE accepts physical Shift and Control but rejects equivalent Quartz modifier state. Therefore, all 36-key letters and modifiers are sent through one virtual hardware keyboard: the standalone [Karabiner DriverKit VirtualHIDDevice 8.2.0](https://github.com/pqrs-org/Karabiner-DriverKit-VirtualHIDDevice/releases/tag/v8.2.0) (a compatible driver bundled with a full Karabiner-Elements install also works, since both share the same install path), plus this app's own bridge that relays key presses to it.
-
-The **Setup Assistant** (shown on first launch, and reachable any time from Help → Setup Assistant) walks through this automatically:
-
-1. **Install the driver** — opens the official release page; the assistant detects installation live.
-2. **Approve the extension** — one click activates it, then approve it in System Settings if macOS prompts.
-3. **Set up background services** — installs a LaunchDaemon for Karabiner's own daemon (skipped if one is already present, so a full Karabiner-Elements install is never touched) and one for this app's bridge, so both start automatically at login. This is the one step that needs an administrator password, asked once.
-
-You can skip driver installation entirely and use 21-key natural mode instead, which needs only Accessibility permission and no background services. **Settings → General → Setup** shows live readiness and has a **Remove Helper Services** button that uninstalls both LaunchDaemons.
-
-If the administrator prompt isn't available on your Mac, the Setup Assistant's background-services step reveals the equivalent manual commands to run in Terminal:
-
-```sh
-'/Applications/.Karabiner-VirtualHIDDevice-Manager.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Manager' activate
-sudo '/Library/Application Support/org.pqrs/Karabiner-DriverKit-VirtualHIDDevice/Applications/Karabiner-VirtualHIDDevice-Daemon.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Daemon'
-sudo '/Applications/NTE Piano MIDI Player.app/Contents/Helpers/NTEVirtualHIDBridge' --allowed-uid "$(id -u)"
-```
-
-The bridge runs as root because the upstream driver requires it, but accepts only one authenticated local user and only the 21 piano letters, left Shift, and left Control. It releases the keyboard on disconnect or heartbeat timeout. There is no silent Quartz fallback when 36-key VirtualHID is unavailable.
-
-## Arrangement modes
-
-### Automatic
-
-Automatic is the default and applies one deterministic best-effort pipeline to every parseable Standard MIDI file. It:
-
-- applies tempo changes and sustain-pedal duration extensions;
-- omits General MIDI percussion channel 10;
-- groups nearby onsets into real chords;
-- evaluates bounded global transpositions while minimizing total register movement;
-- generates fixed single-layer and two-layer candidates for each 36-key onset;
-- keeps compatible chords simultaneous, rolls slow cross-layer chords exactly, and reduces fast cross-layer chords without introducing wrong pitches;
-- favors melody, bass, velocity, duration, pitch-class diversity, register continuity, and fewer layer switches;
-- octave-folds wide ranges, removes collisions, and enforces one six-note budget across every source onset;
-- merges impractically rapid retriggers; and
-- reports transposes, folds, exact rolls, timing reductions, merges, percussion omissions, unsupported expression events, and omitted chord tones.
-
-Work is bounded to sorting plus fixed-size candidate evaluation (`O(N log N)` time and `O(N)` memory). Import arrangement runs away from the main actor and uses cancellation/generation tokens so a superseded import cannot publish stale results.
-
-### Original
-
-Original is a diagnostic comparison path. It retains the selected tracks, including channel 10, and bypasses automatic global fitting and musical reduction where possible. It still obeys the chosen NTE layout, one-layer-per-chord rule, range safety, collision removal, and simultaneous-key limit because the game cannot reproduce impossible inputs.
-
-NTE cannot reproduce arbitrary MIDI ranges, velocity dynamics, or pitch bend. Automatic 36-key mode can represent a cross-layer chord as a short exact roll only when the next onset leaves enough time; otherwise it omits lower-priority tones. Both modes therefore remain best-effort rather than claiming note-for-note reproduction.
-
-## NTE layouts
-
-All three physical rows are fixed:
-
-| Row | Keys |
-| --- | --- |
-| TRE | `QWERTYU` |
-| MID | `ASDFGHJ` |
-| BAS | `ZXCVBNM` |
-
-### 21-key natural
-
-The seven positions on every row are C, D, E, F, G, A, B. This mode never uses Shift or Ctrl and never expands an accidental into two neighboring notes. Automatic mode can chromatically transpose a song within ±24 semitones to maximize natural-note coverage before octave fitting or one-semitone snapping.
-
-### 36-key chromatic
-
-The keyboard provides these three layers:
-
-| Layer | Seven positions on each row |
-| --- | --- |
-| No modifier | C, D, E, F, G, A, B |
-| Shift | C#, D, E, F#, G#, A, B |
-| Ctrl | C, D, Eb, F, G, A, Bb |
-
-The corresponding bindings are:
-
-| Pitch position | BAS | MID | TRE |
-| --- | --- | --- | --- |
-| C | Z | A | Q |
-| C# | Shift+Z | Shift+A | Shift+Q |
-| D | X | S | W |
-| Eb | Ctrl+C | Ctrl+D | Ctrl+E |
-| E | C | D | E |
-| F | V | F | R |
-| F# | Shift+V | Shift+F | Shift+R |
-| G | B | G | T |
-| G# | Shift+B | Shift+G | Shift+T |
-| A | N | H | Y |
-| Bb | Ctrl+M | Ctrl+J | Ctrl+U |
-| B | M | J | U |
-
-The default MIDI range starts at BAS C3 (MIDI 48); MID and TRE begin one and two octaves above it. Automatic 36-key fitting searches octave-preserving shifts within ±24 semitones, but prefers the shift with the least total movement from the requested register.
-
-Compatible chords press all letter keys at the same time. When a chord needs two layers, Automatic mode schedules an exact roll only if the required tap, release, gap, and modifier-lead time fit before the next onset. Rapid passages stay on one layer and omit incompatible lower-priority tones rather than moving them by a semitone. The scheduler releases letter keys before changing layers, while complete hardware reports and held-key reference counts prevent overlapping notes from releasing one another. The effective 36-key budget is six notes per source onset, even when those notes are divided between two packets; a higher saved preference remains available to 21-key arrangement.
-
-## Safety and cleanup
-
-21-key live playback requires Accessibility permission. VirtualHID 36-key playback does not, although the optional input-event recorder still does. Both live paths require one of these foreground app names by default:
-
-- `NTE.app`
-- `NTE`
-- `Neverness to Everness`
-
-All held letter keys and modifiers are released on stop, focus loss, cancellation, completion, or error. Using automation in an online game may violate its rules or terms of service; use it at your own risk.
-
-The in-game piano is at Hethereau Skytower in the Miguel District; take the elevator to the restaurant.
-
-### Input-event diagnostics
-
-With **Enable Advanced Developer Settings** on, the Input Event Recorder below Range Diagnostics compares physical keyboard input with events injected by the player. Start recording, physically hold left Shift and left Control in NTE, then run the two-second Hold Shift and Hold Ctrl calibrations. Stop recording and use Copy Trace. `PLAYER` identifies Quartz events tagged by this app. VirtualHID travels through the hardware path and may appear as `EXTERNAL` with `pid=0`, so correlate it with the separate VirtualHID report trace. The recorder captures only Shift, Control, and the 21 piano letter keys, is capped at 500 events, and requires Accessibility permission; it does not require Input Monitoring access.
-
-## Other features
-
-- Track search, enable, mute, and solo controls (visible on the main window)
-- Listen (speaker preview) using `AVMIDIPlayer`, separate from key injection (visible on the main window)
-- Countdown before playback (3s / 5s / 7s / 10s / 15s, in Settings → General), Liquid Glass opacity, and light/dark/system appearance in Settings → General
-- Tempo multiplier, pause/resume, progress, visual keyboard preview, and transformation diagnostics (Advanced)
-- Manual keyboard remapping and modifier calibration (Advanced)
-- Piano-sheet export with note names, degrees, key labels, line wrapping, and chord brackets (Advanced, and via the File menu)
-- Persistent settings and recent files (File → Open Recent) through the existing UserDefaults domain
-
-## Known limitations
-
-- MIDI dynamics, pitch bends, aftertouch, and other unsupported expression data are reported but not reproduced.
-- Dense or cross-layer chords may be octave-folded, rolled, deduplicated, or reduced to the physical key and timing limits. Automatic 36-key mode does not semitone-snap; Original and 21-key comparison behavior is unchanged.
-- Live MIDI input, playlist polish, a system-wide emergency hotkey, and Windows support are outside the current scope.
-- Release ZIPs are unsigned and unnotarized, so manual macOS approval may be required.
+This project is not affiliated with or endorsed by Hotta Studio. Neverness to Everness and related names, logos, and game assets belong to their respective owners.

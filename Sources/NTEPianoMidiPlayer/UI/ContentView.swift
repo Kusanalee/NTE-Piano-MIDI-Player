@@ -18,7 +18,6 @@ struct ContentView: View {
             if let remaining = viewModel.countdownRemaining {
                 CountdownOverlayView(
                     remaining: remaining,
-                    acceptedAppName: acceptedAppName,
                     onCancel: viewModel.stop
                 )
                 .zIndex(1)

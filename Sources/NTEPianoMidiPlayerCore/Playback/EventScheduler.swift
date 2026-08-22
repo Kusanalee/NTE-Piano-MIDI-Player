@@ -1,25 +1,17 @@
 import Foundation
 
 public enum PlaybackState: String, Codable, Equatable {
-    case idle
-    case countingDown
-    case playing
-    case paused
-    case stopped
-    case completed
-    case lostFocus
+    case idle, countingDown, playing, paused, stopped, completed, lostFocus
 }
 
 public enum PlaybackFinishReason: String, Codable, Equatable {
-    case completed
-    case stopped
-    case lostFocus
+    case completed, stopped, lostFocus
 }
 
 public enum ScheduledPlaybackActionKind: Equatable {
     case key(PianoKey, keyEventModifier: KeyModifier, keyDown: Bool)
     case modifier(KeyModifier, ModifierKeySide, keyDown: Bool)
-    case dryRun(String)
+    case preview(String)
     case progress(TimeInterval)
 }
 
@@ -36,235 +28,186 @@ public struct ScheduledPlaybackAction: Equatable {
 }
 
 public enum LayeredPlaybackPlanner {
-    private struct LayerSegment {
-        var desiredTime: TimeInterval
-        var duration: TimeInterval
-        var modifier: KeyModifier
-        var keys: [PianoKey]
-        var progressTime: TimeInterval?
-        var dryRunDescription: String
-    }
-
-    public static func plan(groups: [MappedNoteGroup], settings rawSettings: PlaybackSettings) -> [ScheduledPlaybackAction] {
+    public static func plan(chords: [PlayableChord], settings rawSettings: PlaybackSettings) -> [ScheduledPlaybackAction] {
         let settings = rawSettings.clamped()
-        let segments = makeSegments(groups: groups, settings: settings)
-        return planSegments(segments, settings: settings)
-    }
+        let chords = chords.filter { !$0.strokes.isEmpty }.sorted {
+            if $0.startTime == $1.startTime { return $0.playbackOffset < $1.playbackOffset }
+            return $0.startTime < $1.startTime
+        }
+        guard !chords.isEmpty else { return [] }
 
-    private static func makeSegments(groups: [MappedNoteGroup], settings: PlaybackSettings) -> [LayerSegment] {
-        var segments: [LayerSegment] = []
+        var actions: [ScheduledPlaybackAction] = []
+        let starts = chords.map {
+            settings.countdownDuration + ($0.startTime / settings.tempoMultiplier) + $0.playbackOffset
+        }
 
-        for group in groups {
-            let baseTime = settings.countdownDuration + (group.startTime / settings.tempoMultiplier)
-            let duration = keyPressDuration(for: group, settings: settings)
-            let groupedKeys = keysByModifier(for: group)
-            let activeLayers = [KeyModifier.none, .shift, .control].filter { !(groupedKeys[$0] ?? []).isEmpty }
+        for index in chords.indices {
+            let chord = chords[index]
+            let start = starts[index]
+            let modifier = chord.layer.modifier
+            let keyModifier = keyEventModifier(for: modifier, mode: settings.modifierInjectionMode)
+            let endLimit = nextLayerBoundary(after: index, chords: chords, starts: starts, settings: settings)
 
-            for (layerIndex, modifier) in activeLayers.enumerated() {
-                guard let keys = groupedKeys[modifier], !keys.isEmpty else { continue }
-                segments.append(
-                    LayerSegment(
-                        desiredTime: baseTime,
-                        duration: duration,
-                        modifier: modifier,
-                        keys: keys,
-                        progressTime: layerIndex == 0 ? group.startTime : nil,
-                        dryRunDescription: dryRunDescription(for: keys, modifier: modifier)
+            if index == chords.startIndex || chord.startTime != chords[index - 1].startTime {
+                actions.append(ScheduledPlaybackAction(time: start, order: 0, kind: .progress(chord.startTime)))
+            }
+            actions.append(
+                ScheduledPlaybackAction(
+                    time: start,
+                    order: 1,
+                    kind: .preview(previewDescription(for: chord))
+                )
+            )
+
+            for (strokeIndex, stroke) in chord.strokes.enumerated() {
+                let down = start + (Double(strokeIndex) * settings.chordStagger)
+                let requestedDuration: TimeInterval
+                if settings.holdSustainedNotes {
+                    requestedDuration = min(
+                        max(stroke.duration / settings.tempoMultiplier, settings.tapDuration),
+                        settings.maxHoldDuration
+                    )
+                } else {
+                    requestedDuration = settings.tapDuration
+                }
+                let up = min(down + requestedDuration, endLimit)
+                actions.append(
+                    ScheduledPlaybackAction(
+                        time: down,
+                        order: 100 + strokeIndex,
+                        kind: .key(stroke.key, keyEventModifier: keyModifier, keyDown: true)
+                    )
+                )
+                actions.append(
+                    ScheduledPlaybackAction(
+                        time: max(down, up),
+                        order: 200 + strokeIndex,
+                        kind: .key(stroke.key, keyEventModifier: keyModifier, keyDown: false)
                     )
                 )
             }
         }
 
-        return segments.sorted {
-            if $0.desiredTime == $1.desiredTime {
-                return modifierOrder($0.modifier) < modifierOrder($1.modifier)
-            }
-            return $0.desiredTime < $1.desiredTime
-        }
-    }
-
-    private static func keysByModifier(for group: MappedNoteGroup) -> [KeyModifier: [PianoKey]] {
-        var result: [KeyModifier: [PianoKey]] = [:]
-        for event in group.events {
-            for key in event.pianoKeys {
-                if !(result[key.modifier] ?? []).contains(where: { existing in
-                    existing.keyboardKey == key.keyboardKey && existing.modifier == key.modifier
-                }) {
-                    result[key.modifier, default: []].append(key)
-                }
-            }
-        }
-        return result
-    }
-
-    private static func planSegments(_ segments: [LayerSegment], settings: PlaybackSettings) -> [ScheduledPlaybackAction] {
-        var actions: [ScheduledPlaybackAction] = []
-        var cursor: TimeInterval = 0
-        var index = 0
-
-        while index < segments.count {
-            let segment = segments[index]
-            if segment.modifier == .none || settings.modifierInjectionMode == .flagsOnly {
-                let keyStartTime = max(segment.desiredTime, cursor)
-                actions.append(contentsOf: utilityActions(for: segment, at: keyStartTime))
-                actions.append(contentsOf: keyActions(for: segment, keyStartTime: keyStartTime, settings: settings))
-                cursor = segmentEnd(for: segment, keyStartTime: keyStartTime, settings: settings) + settings.layerSwitchGap
-                index += 1
-                continue
-            }
-
-            let modifier = segment.modifier
-            let side = modifierSide(for: settings.modifierInjectionMode)
-            let modifierDownTime = max(cursor, segment.desiredTime - settings.modifierLeadTime)
-            var runSegments: [(segment: LayerSegment, keyStartTime: TimeInterval)] = []
-            var lastKeyUpTime: TimeInterval = 0
-            var nextMinimumKeyStart = modifierDownTime + settings.modifierLeadTime
-            var runIndex = index
-
-            while runIndex < segments.count {
-                let candidate = segments[runIndex]
-                guard candidate.modifier == modifier else { break }
-
-                if runIndex != index {
-                    let projectedModifierUp = lastKeyUpTime + settings.modifierReleaseDelay
-                    guard candidate.desiredTime <= projectedModifierUp + settings.modifierReuseWindow else {
-                        break
-                    }
-                }
-
-                let keyStartTime = max(candidate.desiredTime, nextMinimumKeyStart)
-                runSegments.append((candidate, keyStartTime))
-                lastKeyUpTime = max(lastKeyUpTime, segmentEnd(for: candidate, keyStartTime: keyStartTime, settings: settings))
-                nextMinimumKeyStart = keyStartTime
-                runIndex += 1
-            }
-
-            actions.append(
-                ScheduledPlaybackAction(
-                    time: modifierDownTime,
-                    order: 10,
-                    kind: .modifier(modifier, side, keyDown: true)
-                )
-            )
-            for planned in runSegments {
-                actions.append(contentsOf: utilityActions(for: planned.segment, at: planned.keyStartTime))
-                actions.append(contentsOf: keyActions(for: planned.segment, keyStartTime: planned.keyStartTime, settings: settings))
-            }
-            let modifierUpTime = lastKeyUpTime + settings.modifierReleaseDelay
-            actions.append(
-                ScheduledPlaybackAction(
-                    time: modifierUpTime,
-                    order: 300,
-                    kind: .modifier(modifier, side, keyDown: false)
-                )
-            )
-            cursor = modifierUpTime + settings.layerSwitchGap
-            index = runIndex
-        }
-
+        appendModifierTransitions(chords: chords, starts: starts, settings: settings, actions: &actions)
         return actions.sorted {
-            if $0.time == $1.time {
-                return $0.order < $1.order
-            }
+            if $0.time == $1.time { return $0.order < $1.order }
             return $0.time < $1.time
         }
     }
 
-    private static func utilityActions(for segment: LayerSegment, at keyStartTime: TimeInterval) -> [ScheduledPlaybackAction] {
-        var actions = [
-            ScheduledPlaybackAction(
-                time: keyStartTime,
-                order: 0,
-                kind: .dryRun("\(segment.dryRunDescription) duration=\(String(format: "%.3f", segment.duration))")
-            )
-        ]
-        if let progressTime = segment.progressTime {
+    /// Compatibility adapter used by calibration code and sheet-oriented callers.
+    public static func plan(groups: [MappedNoteGroup], settings: PlaybackSettings) -> [ScheduledPlaybackAction] {
+        let chords = groups.flatMap { group -> [PlayableChord] in
+            Dictionary(grouping: group.events.flatMap { event in
+                event.pianoKeys.map { ($0.modifier, event, $0) }
+            }, by: { $0.0 }).compactMap { modifier, entries in
+                let layer: NTELayer
+                switch modifier {
+                case .none: layer = .natural
+                case .shift: layer = .sharp
+                case .control: layer = .flat
+                }
+                let strokes = entries.map { _, event, key in
+                    PlayableKeyStroke(
+                        key: key,
+                        source: event.source,
+                        adjustedMidiNote: event.adjustedMidiNote,
+                        mappingKind: event.mappingKind,
+                        duration: event.duration
+                    )
+                }
+                return PlayableChord(startTime: group.startTime, layer: layer, strokes: strokes)
+            }
+        }
+        return plan(chords: chords, settings: settings)
+    }
+
+    private static func nextLayerBoundary(
+        after index: Int,
+        chords: [PlayableChord],
+        starts: [TimeInterval],
+        settings: PlaybackSettings
+    ) -> TimeInterval {
+        guard index + 1 < chords.count else { return .greatestFiniteMagnitude }
+        let current = chords[index].layer
+        for nextIndex in (index + 1)..<chords.count where chords[nextIndex].layer != current {
+            let nextModifier = chords[nextIndex].layer.modifier
+            let preparation = nextModifier == .none ? settings.layerSwitchGap : settings.modifierLeadTime + settings.layerSwitchGap
+            return max(starts[index], starts[nextIndex] - preparation - settings.modifierReleaseDelay)
+        }
+        return .greatestFiniteMagnitude
+    }
+
+    private static func appendModifierTransitions(
+        chords: [PlayableChord],
+        starts: [TimeInterval],
+        settings: PlaybackSettings,
+        actions: inout [ScheduledPlaybackAction]
+    ) {
+        let side = modifierSide(for: settings.modifierInjectionMode)
+        guard settings.modifierInjectionMode != .flagsOnly else { return }
+        var active = KeyModifier.none
+
+        for index in chords.indices {
+            let desired = chords[index].layer.modifier
+            guard desired != active else { continue }
+            let start = starts[index]
+            let desiredDown = desired == .none ? start : max(0, start - settings.modifierLeadTime)
+            if active != .none {
+                actions.append(
+                    ScheduledPlaybackAction(
+                        time: max(0, desiredDown - settings.layerSwitchGap),
+                        order: 20,
+                        kind: .modifier(active, side, keyDown: false)
+                    )
+                )
+            }
+            if desired != .none {
+                actions.append(
+                    ScheduledPlaybackAction(
+                        time: desiredDown,
+                        order: 30,
+                        kind: .modifier(desired, side, keyDown: true)
+                    )
+                )
+            }
+            active = desired
+        }
+
+        if active != .none {
+            let lastChord = chords[chords.count - 1]
+            let lastStart = starts[starts.count - 1]
+            let lastDuration = lastChord.strokes.map { stroke -> TimeInterval in
+                if settings.holdSustainedNotes {
+                    return min(max(stroke.duration / settings.tempoMultiplier, settings.tapDuration), settings.maxHoldDuration)
+                }
+                return settings.tapDuration
+            }.max() ?? settings.tapDuration
             actions.append(
                 ScheduledPlaybackAction(
-                    time: keyStartTime,
-                    order: 900,
-                    kind: .progress(progressTime)
+                    time: lastStart + lastDuration + settings.modifierReleaseDelay,
+                    order: 300,
+                    kind: .modifier(active, side, keyDown: false)
                 )
             )
         }
-        return actions
     }
 
-    private static func keyActions(for segment: LayerSegment, keyStartTime: TimeInterval, settings: PlaybackSettings) -> [ScheduledPlaybackAction] {
-        var actions: [ScheduledPlaybackAction] = []
-        let keyEventModifier = keyEventModifier(for: segment.modifier, mode: settings.modifierInjectionMode)
-
-        for (index, key) in segment.keys.enumerated() {
-            let downTime = keyStartTime + (Double(index) * settings.chordStagger)
-            let upTime = downTime + segment.duration
-            actions.append(
-                ScheduledPlaybackAction(
-                    time: downTime,
-                    order: 100 + index,
-                    kind: .key(key, keyEventModifier: keyEventModifier, keyDown: true)
-                )
-            )
-            actions.append(
-                ScheduledPlaybackAction(
-                    time: upTime,
-                    order: 200 + index,
-                    kind: .key(key, keyEventModifier: keyEventModifier, keyDown: false)
-                )
-            )
-        }
-        return actions
-    }
-
-    private static func segmentEnd(for segment: LayerSegment, keyStartTime: TimeInterval, settings: PlaybackSettings) -> TimeInterval {
-        keyStartTime + (Double(max(segment.keys.count - 1, 0)) * settings.chordStagger) + segment.duration
-    }
-
-    private static func keyPressDuration(for group: MappedNoteGroup, settings: PlaybackSettings) -> TimeInterval {
-        if settings.holdSustainedNotes {
-            let longest = group.events.map(\.duration).max() ?? settings.tapDuration
-            return min(max(longest / settings.tempoMultiplier, settings.tapDuration), settings.maxHoldDuration)
-        }
-        return settings.tapDuration
-    }
-
-    private static func dryRunDescription(for keys: [PianoKey], modifier: KeyModifier) -> String {
-        let taps = keys.map { "\($0.noteName) tap \($0.keyboardKey.rawValue)" }.joined(separator: ", ")
-        switch modifier {
-        case .none:
-            return "natural -> \(taps)"
-        case .shift:
-            return "enter Shift layer -> \(taps) -> exit Shift layer"
-        case .control:
-            return "enter Ctrl layer -> \(taps) -> exit Ctrl layer"
-        }
+    private static func previewDescription(for chord: PlayableChord) -> String {
+        let keys = chord.strokes.map { $0.key.keyboardLabel }.joined(separator: "+")
+        return "\(chord.layer.rawValue) chord -> \(keys)"
     }
 
     private static func keyEventModifier(for modifier: KeyModifier, mode: ModifierInjectionMode) -> KeyModifier {
         switch mode {
-        case .hardwareStateLeft, .hardwareStateRight:
-            return .none
-        case .hybridLeft, .flagsOnly:
-            return modifier
+        case .hardwareStateLeft, .hardwareStateRight: .none
+        case .hybridLeft, .flagsOnly: modifier
         }
     }
 
     private static func modifierSide(for mode: ModifierInjectionMode) -> ModifierKeySide {
-        switch mode {
-        case .hardwareStateRight:
-            return .right
-        case .hardwareStateLeft, .hybridLeft, .flagsOnly:
-            return .left
-        }
+        mode == .hardwareStateRight ? .right : .left
     }
-
-    private static func modifierOrder(_ modifier: KeyModifier) -> Int {
-        switch modifier {
-        case .none: 0
-        case .shift: 1
-        case .control: 2
-        }
-    }
-
 }
 
 public final class EventScheduler {
@@ -280,7 +223,7 @@ public final class EventScheduler {
     public init() {}
 
     public func start(
-        events: [MappedNoteEvent],
+        chords: [PlayableChord],
         settings rawSettings: PlaybackSettings,
         injector: KeyInjecting,
         frontmostGuard: @escaping () -> Bool,
@@ -289,10 +232,8 @@ public final class EventScheduler {
         onFinish: @escaping (PlaybackFinishReason) -> Void
     ) {
         stop()
-
         let settings = rawSettings.clamped()
-        let groupedEvents = EventTimelineBuilder.group(events: events, threshold: settings.chordThreshold)
-        let actions = LayeredPlaybackPlanner.plan(groups: groupedEvents, settings: settings)
+        let actions = LayeredPlaybackPlanner.plan(chords: chords, settings: settings)
         let runID = UUID()
 
         lock.lock()
@@ -305,10 +246,9 @@ public final class EventScheduler {
         lock.unlock()
 
         queue.async { [weak self] in
-            guard let self else { return }
-            self.run(
+            self?.run(
                 runID: runID,
-                groups: groupedEvents,
+                hasContent: !chords.isEmpty,
                 actions: actions,
                 settings: settings,
                 injector: injector,
@@ -332,9 +272,7 @@ public final class EventScheduler {
     public func resume() {
         lock.lock()
         if paused {
-            if let pauseBegan {
-                pauseDebt += DispatchTime.now().uptimeNanoseconds - pauseBegan
-            }
+            if let pauseBegan { pauseDebt += DispatchTime.now().uptimeNanoseconds - pauseBegan }
             paused = false
             self.pauseBegan = nil
         }
@@ -355,7 +293,7 @@ public final class EventScheduler {
 
     private func run(
         runID: UUID,
-        groups: [MappedNoteGroup],
+        hasContent: Bool,
         actions: [ScheduledPlaybackAction],
         settings: PlaybackSettings,
         injector: KeyInjecting,
@@ -365,126 +303,86 @@ public final class EventScheduler {
         onFinish: @escaping (PlaybackFinishReason) -> Void
     ) {
         let startNanos = DispatchTime.now().uptimeNanoseconds
-
-        if settings.countdownDuration > 0 {
-            onStateChange(.countingDown)
-        }
-
-        guard !groups.isEmpty else {
-            if settings.countdownDuration > 0,
-               !wait(until: settings.countdownDuration, startNanos: startNanos, runID: runID) {
-                onStateChange(.stopped)
-                onFinish(.stopped)
-                return
-            }
-            onStateChange(.playing)
+        if settings.countdownDuration > 0 { onStateChange(.countingDown) }
+        guard hasContent else {
             onStateChange(.completed)
             onFinish(.completed)
             return
         }
 
-        var didEnterPlaying = settings.countdownDuration <= 0
-        if didEnterPlaying {
-            onStateChange(.playing)
-        }
-
+        var enteredPlaying = settings.countdownDuration <= 0
+        if enteredPlaying { onStateChange(.playing) }
         for action in actions {
-            if !didEnterPlaying, action.time >= settings.countdownDuration {
+            if !enteredPlaying, action.time >= settings.countdownDuration {
                 guard wait(until: settings.countdownDuration, startNanos: startNanos, runID: runID) else {
-                    onStateChange(.stopped)
-                    onFinish(.stopped)
+                    finishStopped(injector: injector, onStateChange: onStateChange, onFinish: onFinish)
                     return
                 }
+                enteredPlaying = true
                 onStateChange(.playing)
-                didEnterPlaying = true
             }
-
             guard wait(until: action.time, startNanos: startNanos, runID: runID) else {
-                onStateChange(.stopped)
-                onFinish(.stopped)
+                finishStopped(injector: injector, onStateChange: onStateChange, onFinish: onFinish)
                 return
             }
-
-            let needsFrontmostApp = action.needsFrontmostApp
-            if needsFrontmostApp, !frontmostGuard() {
-                stop()
+            if action.needsFrontmostApp, !frontmostGuard() {
+                injector.releaseAll()
                 onStateChange(.lostFocus)
                 onFinish(.lostFocus)
                 return
             }
-
             switch action.kind {
-            case let .key(key, keyEventModifier, keyDown):
-                injector.setKey(
-                    key,
-                    keyEventModifier: keyEventModifier,
-                    keyDown: keyDown,
-                    eventPostTarget: settings.eventPostTarget
-                )
-            case let .modifier(modifier, side, keyDown):
-                injector.setModifier(
-                    modifier,
-                    side: side,
-                    keyDown: keyDown,
-                    eventPostTarget: settings.eventPostTarget
-                )
-            case let .dryRun(entry):
-                injector.recordDryRun(entry)
+            case let .key(key, modifier, down):
+                injector.setKey(key, keyEventModifier: modifier, keyDown: down, eventPostTarget: settings.eventPostTarget)
+            case let .modifier(modifier, side, down):
+                injector.setModifier(modifier, side: side, keyDown: down, eventPostTarget: settings.eventPostTarget)
+            case let .preview(entry):
+                injector.recordPreview(entry)
             case let .progress(time):
                 onProgress(time)
             }
         }
-
-        lock.lock()
-        let isCurrent = currentRunID == runID && !stopped
-        if isCurrent {
-            stopped = true
-            activeInjector = nil
-        }
-        lock.unlock()
-
-        if isCurrent {
-            injector.releaseAll()
-            onStateChange(.completed)
-            onFinish(.completed)
-        }
+        injector.releaseAll()
+        onStateChange(.completed)
+        onFinish(.completed)
     }
 
-    private func wait(until targetSeconds: TimeInterval, startNanos: UInt64, runID: UUID) -> Bool {
-        let targetOffset = UInt64(max(0, targetSeconds) * 1_000_000_000)
+    private func finishStopped(
+        injector: KeyInjecting,
+        onStateChange: (PlaybackState) -> Void,
+        onFinish: (PlaybackFinishReason) -> Void
+    ) {
+        injector.releaseAll()
+        onStateChange(.stopped)
+        onFinish(.stopped)
+    }
 
+    private func wait(until seconds: TimeInterval, startNanos: UInt64, runID: UUID) -> Bool {
+        let targetOffset = UInt64(max(0, seconds) * 1_000_000_000)
         while true {
             lock.lock()
-            let runIsCurrent = currentRunID == runID
-            let shouldStop = stopped || !runIsCurrent
+            let valid = !stopped && currentRunID == runID
             let isPaused = paused
             let debt = pauseDebt
             lock.unlock()
-
-            if shouldStop { return false }
+            guard valid else { return false }
             if isPaused {
                 Thread.sleep(forTimeInterval: 0.005)
                 continue
             }
-
             let target = startNanos + targetOffset + debt
             let now = DispatchTime.now().uptimeNanoseconds
             if now >= target { return true }
-
-            let remaining = TimeInterval(target - now) / 1_000_000_000
-            Thread.sleep(forTimeInterval: min(max(remaining, 0.001), 0.005))
+            Thread.sleep(forTimeInterval: min(max(TimeInterval(target - now) / 1_000_000_000, 0.001), 0.005))
         }
     }
-
 }
 
 private extension ScheduledPlaybackAction {
     var needsFrontmostApp: Bool {
         switch kind {
-        case .key, .modifier:
-            return true
-        case .dryRun, .progress:
-            return false
+        case .key, .modifier: true
+        case .preview, .progress: false
         }
     }
 }

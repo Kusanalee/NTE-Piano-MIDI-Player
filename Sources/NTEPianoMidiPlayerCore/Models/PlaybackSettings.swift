@@ -14,6 +14,20 @@ public enum LayoutMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+public enum ArrangementMode: String, Codable, CaseIterable, Identifiable {
+    case automatic
+    case original
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .original: "Original"
+        }
+    }
+}
+
 public enum NaturalScaleHandling: String, Codable, CaseIterable, Identifiable {
     case skipUnplayable
     case snapToNearest
@@ -102,20 +116,6 @@ public enum ThemePreference: String, Codable, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
-public enum AccidentalPlaybackMode: String, Codable, CaseIterable, Identifiable {
-    case approximateWithNeighbors
-    case useShiftCtrlModifiers
-
-    public var id: String { rawValue }
-
-    public var displayName: String {
-        switch self {
-        case .approximateWithNeighbors: "Approximate with neighbors"
-        case .useShiftCtrlModifiers: "Use Shift/Ctrl modifiers"
-        }
-    }
-}
-
 public enum ModifierInjectionMode: String, Codable, CaseIterable, Identifiable {
     case hardwareStateLeft
     case hybridLeft
@@ -127,7 +127,7 @@ public enum ModifierInjectionMode: String, Codable, CaseIterable, Identifiable {
     public var displayName: String {
         switch self {
         case .hardwareStateLeft: "Hardware state left"
-        case .hybridLeft: "Hybrid left"
+        case .hybridLeft: "Hybrid left (recommended for NTE)"
         case .flagsOnly: "Flags only"
         case .hardwareStateRight: "Hardware state right"
         }
@@ -152,8 +152,10 @@ public enum EventPostTarget: String, Codable, CaseIterable, Identifiable {
 
 public struct PlaybackSettings: Codable, Equatable {
     public static let defaultAcceptedForegroundAppNames = ["NTE.app", "NTE", "Neverness to Everness"]
+    public static let countdownOptions: [Double] = [3, 5, 7, 10, 15]
 
     public var layoutMode: LayoutMode
+    public var arrangementMode: ArrangementMode
     public var baseMidiNoteForBAS1: Int
     public var globalTranspose: Int
     public var octaveShift: Int
@@ -171,23 +173,24 @@ public struct PlaybackSettings: Codable, Equatable {
     public var chordStagger: Double
     public var mergeThreshold: Double
     public var simultaneousKeyLimit: Int
-    public var dryRun: Bool
+    public var startInPreviewMode: Bool
     public var acceptedForegroundAppNames: [String]
     public var emergencyStopHotkey: EmergencyStopHotkey
     public var themePreference: ThemePreference
     public var manualKeyOverrides: [String: KeyboardKey]
-    public var multiKeyApproximationEnabled: Bool
-    public var accidentalPlaybackMode: AccidentalPlaybackMode
-    public var maxApproximationKeys: Int
     public var modifierInjectionMode: ModifierInjectionMode
     public var modifierLeadTime: Double
     public var modifierReleaseDelay: Double
     public var modifierReuseWindow: Double
     public var layerSwitchGap: Double
     public var eventPostTarget: EventPostTarget
+    public var advancedSettingsEnabled: Bool
+    public var glassOpacity: Double
+    public var onboardingCompletedVersion: Int
 
     private enum CodingKeys: String, CodingKey {
         case layoutMode
+        case arrangementMode
         case baseMidiNoteForBAS1
         case globalTranspose
         case octaveShift
@@ -205,24 +208,26 @@ public struct PlaybackSettings: Codable, Equatable {
         case chordStagger
         case mergeThreshold
         case simultaneousKeyLimit
-        case dryRun
+        case startInPreviewMode
+        case dryRun // Legacy v1 migration only.
         case acceptedForegroundAppNames
         case emergencyStopHotkey
         case themePreference
         case manualKeyOverrides
-        case multiKeyApproximationEnabled
-        case accidentalPlaybackMode
-        case maxApproximationKeys
         case modifierInjectionMode
         case modifierLeadTime
         case modifierReleaseDelay
         case modifierReuseWindow
         case layerSwitchGap
         case eventPostTarget
+        case advancedSettingsEnabled
+        case glassOpacity
+        case onboardingCompletedVersion
     }
 
     public init(
         layoutMode: LayoutMode = .nte36Chromatic,
+        arrangementMode: ArrangementMode = .automatic,
         baseMidiNoteForBAS1: Int = 48,
         globalTranspose: Int = 0,
         octaveShift: Int = 0,
@@ -232,30 +237,31 @@ public struct PlaybackSettings: Codable, Equatable {
         targetKey: MusicalKey = .c,
         keyTranspositionEnabled: Bool = false,
         tempoMultiplier: Double = 1.0,
-        countdownDuration: Double = 3.0,
+        countdownDuration: Double = 7.0,
         tapDuration: Double = 0.032,
         holdSustainedNotes: Bool = false,
         maxHoldDuration: Double = 2.0,
         chordThreshold: Double = 0.010,
-        chordStagger: Double = 0.005,
+        chordStagger: Double = 0,
         mergeThreshold: Double = 0.015,
         simultaneousKeyLimit: Int = 6,
-        dryRun: Bool = true,
+        startInPreviewMode: Bool = true,
         acceptedForegroundAppNames: [String] = PlaybackSettings.defaultAcceptedForegroundAppNames,
         emergencyStopHotkey: EmergencyStopHotkey = .escape,
         themePreference: ThemePreference = .system,
         manualKeyOverrides: [String: KeyboardKey] = [:],
-        multiKeyApproximationEnabled: Bool = true,
-        accidentalPlaybackMode: AccidentalPlaybackMode = .approximateWithNeighbors,
-        maxApproximationKeys: Int = 2,
-        modifierInjectionMode: ModifierInjectionMode = .hardwareStateLeft,
+        modifierInjectionMode: ModifierInjectionMode = .hybridLeft,
         modifierLeadTime: Double = 0.120,
         modifierReleaseDelay: Double = 0.008,
         modifierReuseWindow: Double = 0.120,
         layerSwitchGap: Double = 0.020,
-        eventPostTarget: EventPostTarget = .hidEventTap
+        eventPostTarget: EventPostTarget = .hidEventTap,
+        advancedSettingsEnabled: Bool = false,
+        glassOpacity: Double = 0.85,
+        onboardingCompletedVersion: Int = 0
     ) {
         self.layoutMode = layoutMode
+        self.arrangementMode = arrangementMode
         self.baseMidiNoteForBAS1 = baseMidiNoteForBAS1
         self.globalTranspose = globalTranspose
         self.octaveShift = octaveShift
@@ -273,20 +279,20 @@ public struct PlaybackSettings: Codable, Equatable {
         self.chordStagger = chordStagger
         self.mergeThreshold = mergeThreshold
         self.simultaneousKeyLimit = simultaneousKeyLimit
-        self.dryRun = dryRun
+        self.startInPreviewMode = startInPreviewMode
         self.acceptedForegroundAppNames = acceptedForegroundAppNames
         self.emergencyStopHotkey = emergencyStopHotkey
         self.themePreference = themePreference
         self.manualKeyOverrides = manualKeyOverrides
-        self.multiKeyApproximationEnabled = multiKeyApproximationEnabled
-        self.accidentalPlaybackMode = accidentalPlaybackMode
-        self.maxApproximationKeys = maxApproximationKeys
         self.modifierInjectionMode = modifierInjectionMode
         self.modifierLeadTime = modifierLeadTime
         self.modifierReleaseDelay = modifierReleaseDelay
         self.modifierReuseWindow = modifierReuseWindow
         self.layerSwitchGap = layerSwitchGap
         self.eventPostTarget = eventPostTarget
+        self.advancedSettingsEnabled = advancedSettingsEnabled
+        self.glassOpacity = glassOpacity
+        self.onboardingCompletedVersion = onboardingCompletedVersion
     }
 
     public init(from decoder: Decoder) throws {
@@ -294,6 +300,7 @@ public struct PlaybackSettings: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             layoutMode: try container.decodeIfPresent(LayoutMode.self, forKey: .layoutMode) ?? fallback.layoutMode,
+            arrangementMode: try container.decodeIfPresent(ArrangementMode.self, forKey: .arrangementMode) ?? fallback.arrangementMode,
             baseMidiNoteForBAS1: try container.decodeIfPresent(Int.self, forKey: .baseMidiNoteForBAS1) ?? fallback.baseMidiNoteForBAS1,
             globalTranspose: try container.decodeIfPresent(Int.self, forKey: .globalTranspose) ?? fallback.globalTranspose,
             octaveShift: try container.decodeIfPresent(Int.self, forKey: .octaveShift) ?? fallback.octaveShift,
@@ -311,26 +318,29 @@ public struct PlaybackSettings: Codable, Equatable {
             chordStagger: try container.decodeIfPresent(Double.self, forKey: .chordStagger) ?? fallback.chordStagger,
             mergeThreshold: try container.decodeIfPresent(Double.self, forKey: .mergeThreshold) ?? fallback.mergeThreshold,
             simultaneousKeyLimit: try container.decodeIfPresent(Int.self, forKey: .simultaneousKeyLimit) ?? fallback.simultaneousKeyLimit,
-            dryRun: try container.decodeIfPresent(Bool.self, forKey: .dryRun) ?? fallback.dryRun,
+            startInPreviewMode: try container.decodeIfPresent(Bool.self, forKey: .startInPreviewMode)
+                ?? container.decodeIfPresent(Bool.self, forKey: .dryRun)
+                ?? fallback.startInPreviewMode,
             acceptedForegroundAppNames: try container.decodeIfPresent([String].self, forKey: .acceptedForegroundAppNames) ?? fallback.acceptedForegroundAppNames,
             emergencyStopHotkey: try container.decodeIfPresent(EmergencyStopHotkey.self, forKey: .emergencyStopHotkey) ?? fallback.emergencyStopHotkey,
             themePreference: try container.decodeIfPresent(ThemePreference.self, forKey: .themePreference) ?? fallback.themePreference,
             manualKeyOverrides: try container.decodeIfPresent([String: KeyboardKey].self, forKey: .manualKeyOverrides) ?? fallback.manualKeyOverrides,
-            multiKeyApproximationEnabled: try container.decodeIfPresent(Bool.self, forKey: .multiKeyApproximationEnabled) ?? fallback.multiKeyApproximationEnabled,
-            accidentalPlaybackMode: try container.decodeIfPresent(AccidentalPlaybackMode.self, forKey: .accidentalPlaybackMode) ?? fallback.accidentalPlaybackMode,
-            maxApproximationKeys: try container.decodeIfPresent(Int.self, forKey: .maxApproximationKeys) ?? fallback.maxApproximationKeys,
             modifierInjectionMode: try container.decodeIfPresent(ModifierInjectionMode.self, forKey: .modifierInjectionMode) ?? fallback.modifierInjectionMode,
             modifierLeadTime: try container.decodeIfPresent(Double.self, forKey: .modifierLeadTime) ?? fallback.modifierLeadTime,
             modifierReleaseDelay: try container.decodeIfPresent(Double.self, forKey: .modifierReleaseDelay) ?? fallback.modifierReleaseDelay,
             modifierReuseWindow: try container.decodeIfPresent(Double.self, forKey: .modifierReuseWindow) ?? fallback.modifierReuseWindow,
             layerSwitchGap: try container.decodeIfPresent(Double.self, forKey: .layerSwitchGap) ?? fallback.layerSwitchGap,
-            eventPostTarget: try container.decodeIfPresent(EventPostTarget.self, forKey: .eventPostTarget) ?? fallback.eventPostTarget
+            eventPostTarget: try container.decodeIfPresent(EventPostTarget.self, forKey: .eventPostTarget) ?? fallback.eventPostTarget,
+            advancedSettingsEnabled: try container.decodeIfPresent(Bool.self, forKey: .advancedSettingsEnabled) ?? fallback.advancedSettingsEnabled,
+            glassOpacity: try container.decodeIfPresent(Double.self, forKey: .glassOpacity) ?? fallback.glassOpacity,
+            onboardingCompletedVersion: try container.decodeIfPresent(Int.self, forKey: .onboardingCompletedVersion) ?? fallback.onboardingCompletedVersion
         )
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(layoutMode, forKey: .layoutMode)
+        try container.encode(arrangementMode, forKey: .arrangementMode)
         try container.encode(baseMidiNoteForBAS1, forKey: .baseMidiNoteForBAS1)
         try container.encode(globalTranspose, forKey: .globalTranspose)
         try container.encode(octaveShift, forKey: .octaveShift)
@@ -348,20 +358,20 @@ public struct PlaybackSettings: Codable, Equatable {
         try container.encode(chordStagger, forKey: .chordStagger)
         try container.encode(mergeThreshold, forKey: .mergeThreshold)
         try container.encode(simultaneousKeyLimit, forKey: .simultaneousKeyLimit)
-        try container.encode(dryRun, forKey: .dryRun)
+        try container.encode(startInPreviewMode, forKey: .startInPreviewMode)
         try container.encode(acceptedForegroundAppNames, forKey: .acceptedForegroundAppNames)
         try container.encode(emergencyStopHotkey, forKey: .emergencyStopHotkey)
         try container.encode(themePreference, forKey: .themePreference)
         try container.encode(manualKeyOverrides, forKey: .manualKeyOverrides)
-        try container.encode(multiKeyApproximationEnabled, forKey: .multiKeyApproximationEnabled)
-        try container.encode(accidentalPlaybackMode, forKey: .accidentalPlaybackMode)
-        try container.encode(maxApproximationKeys, forKey: .maxApproximationKeys)
         try container.encode(modifierInjectionMode, forKey: .modifierInjectionMode)
         try container.encode(modifierLeadTime, forKey: .modifierLeadTime)
         try container.encode(modifierReleaseDelay, forKey: .modifierReleaseDelay)
         try container.encode(modifierReuseWindow, forKey: .modifierReuseWindow)
         try container.encode(layerSwitchGap, forKey: .layerSwitchGap)
         try container.encode(eventPostTarget, forKey: .eventPostTarget)
+        try container.encode(advancedSettingsEnabled, forKey: .advancedSettingsEnabled)
+        try container.encode(glassOpacity, forKey: .glassOpacity)
+        try container.encode(onboardingCompletedVersion, forKey: .onboardingCompletedVersion)
     }
 
     public var midiNoteForMID1: Int { baseMidiNoteForBAS1 + 12 }
@@ -382,18 +392,18 @@ public struct PlaybackSettings: Codable, Equatable {
         copy.globalTranspose = min(max(copy.globalTranspose, -24), 24)
         copy.octaveShift = min(max(copy.octaveShift, -3), 3)
         copy.tempoMultiplier = min(max(copy.tempoMultiplier, 0.25), 2.0)
-        copy.countdownDuration = min(max(copy.countdownDuration, 0), 10)
+        copy.countdownDuration = min(max(copy.countdownDuration, 0), 15)
         copy.tapDuration = min(max(copy.tapDuration, 0.005), 0.250)
         copy.maxHoldDuration = min(max(copy.maxHoldDuration, 0.050), 10)
         copy.chordThreshold = min(max(copy.chordThreshold, 0.001), 0.100)
         copy.chordStagger = min(max(copy.chordStagger, 0), 0.050)
         copy.mergeThreshold = min(max(copy.mergeThreshold, 0), 0.100)
         copy.simultaneousKeyLimit = min(max(copy.simultaneousKeyLimit, 1), 12)
-        copy.maxApproximationKeys = min(max(copy.maxApproximationKeys, 1), 3)
         copy.modifierLeadTime = min(max(copy.modifierLeadTime, 0), 0.500)
         copy.modifierReleaseDelay = min(max(copy.modifierReleaseDelay, 0), 0.100)
         copy.modifierReuseWindow = min(max(copy.modifierReuseWindow, 0), 1.000)
         copy.layerSwitchGap = min(max(copy.layerSwitchGap, 0), 0.250)
+        copy.glassOpacity = min(max(copy.glassOpacity, 0.35), 1.0)
         copy.acceptedForegroundAppNames = copy.acceptedForegroundAppNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }

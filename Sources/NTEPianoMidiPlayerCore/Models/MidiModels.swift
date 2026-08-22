@@ -95,6 +95,7 @@ public struct MidiDocument: Codable, Equatable {
     public var tempoChanges: [MidiTempoChange]
     public var timeSignatures: [MidiTimeSignature]
     public var duration: TimeInterval
+    public var unsupportedExpressionEventCount: Int
 
     public init(
         url: URL,
@@ -103,7 +104,8 @@ public struct MidiDocument: Codable, Equatable {
         noteEvents: [MidiNoteEvent],
         tempoChanges: [MidiTempoChange],
         timeSignatures: [MidiTimeSignature],
-        duration: TimeInterval
+        duration: TimeInterval,
+        unsupportedExpressionEventCount: Int = 0
     ) {
         self.url = url
         self.displayName = displayName
@@ -112,5 +114,6 @@ public struct MidiDocument: Codable, Equatable {
         self.tempoChanges = tempoChanges
         self.timeSignatures = timeSignatures
         self.duration = duration
+        self.unsupportedExpressionEventCount = unsupportedExpressionEventCount
     }
 }

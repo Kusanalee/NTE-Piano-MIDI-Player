@@ -24,6 +24,22 @@ public enum KeyModifier: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+public enum NTELayer: String, Codable, CaseIterable, Identifiable {
+    case natural
+    case sharp
+    case flat
+
+    public var id: String { rawValue }
+
+    public var modifier: KeyModifier {
+        switch self {
+        case .natural: .none
+        case .sharp: .shift
+        case .flat: .control
+        }
+    }
+}
+
 public enum KeyboardKey: String, Codable, CaseIterable, Identifiable, Hashable {
     case a = "A"
     case b = "B"
@@ -93,7 +109,6 @@ public struct PianoKey: Codable, Equatable, Hashable, Identifiable {
 public enum MappingKind: String, Codable, CaseIterable, Identifiable {
     case exact
     case modifierExact
-    case neighborApproximation
     case rangeFolded
     case snapped
     case skipped
@@ -171,10 +186,16 @@ public struct MappingDiagnostics: Codable, Equatable {
     public var notesSnapped: Int = 0
     public var duplicateNotesMerged: Int = 0
     public var chordsExceedingLimit: Int = 0
-    public var notesApproximated: Int = 0
     public var notesRangeFolded: Int = 0
     public var modifierExactNotes: Int = 0
-    public var multiKeyExpandedNotes: Int = 0
+    public var automaticTranspose: Int = 0
+    public var percussionNotesOmitted: Int = 0
+    public var chordTonesOmitted: Int = 0
+    public var collisionNotesMerged: Int = 0
+    public var densityNotesMerged: Int = 0
+    public var crossLayerChordsRolled: Int = 0
+    public var timingConstrainedTonesOmitted: Int = 0
+    public var unsupportedExpressionEvents: Int = 0
     public var warnings: [String] = []
 
     public init() {}
@@ -186,20 +207,115 @@ public struct MappingDiagnostics: Codable, Equatable {
             notesSnapped > 0 ||
             duplicateNotesMerged > 0 ||
             chordsExceedingLimit > 0 ||
-            notesApproximated > 0 ||
             notesRangeFolded > 0 ||
             modifierExactNotes > 0 ||
-            multiKeyExpandedNotes > 0 ||
+            automaticTranspose != 0 ||
+            percussionNotesOmitted > 0 ||
+            chordTonesOmitted > 0 ||
+            collisionNotesMerged > 0 ||
+            densityNotesMerged > 0 ||
+            crossLayerChordsRolled > 0 ||
+            timingConstrainedTonesOmitted > 0 ||
+            unsupportedExpressionEvents > 0 ||
             !warnings.isEmpty
     }
 }
 
 public struct NoteMapperResult: Codable, Equatable {
     public var mappedEvents: [MappedNoteEvent]
+    public var playableChords: [PlayableChord]
     public var diagnostics: MappingDiagnostics
 
-    public init(mappedEvents: [MappedNoteEvent], diagnostics: MappingDiagnostics) {
+    public init(mappedEvents: [MappedNoteEvent], playableChords: [PlayableChord] = [], diagnostics: MappingDiagnostics) {
         self.mappedEvents = mappedEvents
+        self.playableChords = playableChords
         self.diagnostics = diagnostics
+    }
+}
+
+public struct PlayableKeyStroke: Codable, Equatable, Identifiable {
+    public var id: UUID
+    public var key: PianoKey
+    public var source: MidiNoteEvent
+    public var adjustedMidiNote: Int
+    public var mappingKind: MappingKind
+    public var duration: TimeInterval
+
+    public init(
+        id: UUID = UUID(),
+        key: PianoKey,
+        source: MidiNoteEvent,
+        adjustedMidiNote: Int,
+        mappingKind: MappingKind,
+        duration: TimeInterval
+    ) {
+        self.id = id
+        self.key = key
+        self.source = source
+        self.adjustedMidiNote = adjustedMidiNote
+        self.mappingKind = mappingKind
+        self.duration = duration
+    }
+
+    public var mappedEvent: MappedNoteEvent {
+        MappedNoteEvent(
+            source: source,
+            adjustedMidiNote: adjustedMidiNote,
+            pianoKey: key,
+            mappingKind: mappingKind,
+            wasRangeFolded: mappingKind == .rangeFolded,
+            startTime: source.startTime,
+            duration: duration
+        )
+    }
+}
+
+public struct PlayableChord: Codable, Equatable, Identifiable {
+    public var id: UUID
+    public var startTime: TimeInterval
+    /// A real-time scheduling offset. `startTime` remains the source MIDI onset.
+    public var playbackOffset: TimeInterval
+    public var layer: NTELayer
+    public var strokes: [PlayableKeyStroke]
+
+    public init(
+        id: UUID = UUID(),
+        startTime: TimeInterval,
+        playbackOffset: TimeInterval = 0,
+        layer: NTELayer,
+        strokes: [PlayableKeyStroke]
+    ) {
+        self.id = id
+        self.startTime = startTime
+        self.playbackOffset = playbackOffset
+        self.layer = layer
+        self.strokes = strokes
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, startTime, playbackOffset, layer, strokes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        startTime = try container.decode(TimeInterval.self, forKey: .startTime)
+        playbackOffset = try container.decodeIfPresent(TimeInterval.self, forKey: .playbackOffset) ?? 0
+        layer = try container.decode(NTELayer.self, forKey: .layer)
+        strokes = try container.decode([PlayableKeyStroke].self, forKey: .strokes)
+    }
+}
+
+public struct ArrangementResult: Codable, Equatable {
+    public var playableChords: [PlayableChord]
+    public var mappedEvents: [MappedNoteEvent]
+    public var diagnostics: MappingDiagnostics
+    public var chosenTranspose: Int
+
+    public init(playableChords: [PlayableChord], diagnostics: MappingDiagnostics, chosenTranspose: Int) {
+        self.playableChords = playableChords
+        self.mappedEvents = playableChords.flatMap { $0.strokes.map(\.mappedEvent) }
+        self.diagnostics = diagnostics
+        self.chosenTranspose = chosenTranspose
     }
 }

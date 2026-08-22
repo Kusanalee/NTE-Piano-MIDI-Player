@@ -3,21 +3,21 @@ import CoreGraphics
 import Foundation
 
 public protocol KeyInjecting: AnyObject {
-    var dryRun: Bool { get set }
-    var dryRunLog: [String] { get }
-    func clearDryRunLog()
+    var previewMode: Bool { get set }
+    var previewLog: [String] { get }
+    func clearPreviewLog()
     func tapChord(
         _ keys: [PianoKey],
         duration: TimeInterval,
         stagger: TimeInterval,
         modifierMode: ModifierInjectionMode,
         eventPostTarget: EventPostTarget,
-        dryRunDescription: String?
+        previewDescription: String?
     )
     func setKey(_ key: PianoKey, keyEventModifier: KeyModifier, keyDown: Bool, eventPostTarget: EventPostTarget)
     func setModifier(_ modifier: KeyModifier, side: ModifierKeySide, keyDown: Bool, eventPostTarget: EventPostTarget)
-    func holdModifier(_ modifier: KeyModifier, mode: ModifierInjectionMode, duration: TimeInterval, eventPostTarget: EventPostTarget, dryRunDescription: String?)
-    func recordDryRun(_ entry: String)
+    func holdModifier(_ modifier: KeyModifier, mode: ModifierInjectionMode, duration: TimeInterval, eventPostTarget: EventPostTarget, previewDescription: String?)
+    func recordPreview(_ entry: String)
     func releaseAll()
 }
 
@@ -27,25 +27,27 @@ public protocol KeyEventPosting: AnyObject {
 }
 
 public final class CGEventKeyInjector: KeyInjecting {
-    public var dryRun: Bool
-    public private(set) var dryRunLog: [String] = []
+    public var previewMode: Bool
+    public private(set) var previewLog: [String] = []
 
     private let eventPoster: KeyEventPosting
     private let logQueue = DispatchQueue(label: "nte-piano-midi-player.key-injector.log")
+    private let stateLock = NSLock()
+    private var heldKeyCounts: [KeyboardKey: Int] = [:]
 
-    public init(dryRun: Bool = true) {
-        self.dryRun = dryRun
+    public init(previewMode: Bool = true) {
+        self.previewMode = previewMode
         self.eventPoster = CGEventKeyPoster()
     }
 
-    init(dryRun: Bool, eventPoster: KeyEventPosting) {
-        self.dryRun = dryRun
+    init(previewMode: Bool, eventPoster: KeyEventPosting) {
+        self.previewMode = previewMode
         self.eventPoster = eventPoster
     }
 
-    public func clearDryRunLog() {
+    public func clearPreviewLog() {
         logQueue.sync {
-            dryRunLog.removeAll()
+            previewLog.removeAll()
         }
     }
 
@@ -55,7 +57,7 @@ public final class CGEventKeyInjector: KeyInjecting {
         stagger: TimeInterval,
         modifierMode: ModifierInjectionMode = .hardwareStateLeft,
         eventPostTarget: EventPostTarget = .hidEventTap,
-        dryRunDescription: String? = nil
+        previewDescription: String? = nil
     ) {
         let ordered = EventTimelineBuilder.orderedForInjection(
             keys.map { key in
@@ -70,10 +72,10 @@ public final class CGEventKeyInjector: KeyInjecting {
             }
         ).flatMap(\.pianoKeys)
 
-        if dryRun {
+        if previewMode {
             let labels = ordered.map(\.keyboardLabel).joined(separator: ", ")
             let formattedDuration = String(format: "%.3f", duration)
-            appendLog("DRY \(dryRunDescription ?? labels) duration=\(formattedDuration)")
+            appendLog("PREVIEW \(previewDescription ?? labels) duration=\(formattedDuration)")
             return
         }
 
@@ -95,12 +97,28 @@ public final class CGEventKeyInjector: KeyInjecting {
     }
 
     public func setKey(_ key: PianoKey, keyEventModifier: KeyModifier, keyDown: Bool, eventPostTarget: EventPostTarget) {
-        guard !dryRun else { return }
-        post(key: key.keyboardKey, modifier: keyEventModifier, keyDown: keyDown, eventPostTarget: eventPostTarget)
+        guard !previewMode else { return }
+        stateLock.lock()
+        let count = heldKeyCounts[key.keyboardKey, default: 0]
+        let shouldPost: Bool
+        if keyDown {
+            heldKeyCounts[key.keyboardKey] = count + 1
+            shouldPost = count == 0
+        } else if count > 1 {
+            heldKeyCounts[key.keyboardKey] = count - 1
+            shouldPost = false
+        } else {
+            heldKeyCounts.removeValue(forKey: key.keyboardKey)
+            shouldPost = count == 1
+        }
+        stateLock.unlock()
+        if shouldPost {
+            post(key: key.keyboardKey, modifier: keyEventModifier, keyDown: keyDown, eventPostTarget: eventPostTarget)
+        }
     }
 
     public func setModifier(_ modifier: KeyModifier, side: ModifierKeySide, keyDown: Bool, eventPostTarget: EventPostTarget) {
-        guard !dryRun else { return }
+        guard !previewMode else { return }
         eventPoster.post(modifier: modifier, side: side, keyDown: keyDown, target: eventPostTarget)
     }
 
@@ -109,10 +127,10 @@ public final class CGEventKeyInjector: KeyInjecting {
         mode: ModifierInjectionMode,
         duration: TimeInterval,
         eventPostTarget: EventPostTarget,
-        dryRunDescription: String?
+        previewDescription: String?
     ) {
-        if dryRun {
-            appendLog("DRY \(dryRunDescription ?? "hold \(modifier.displayName)") duration=\(String(format: "%.3f", duration))")
+        if previewMode {
+            appendLog("PREVIEW \(previewDescription ?? "hold \(modifier.displayName)") duration=\(String(format: "%.3f", duration))")
             return
         }
         pressModifierIfNeeded(modifier, mode: mode, keyDown: true, eventPostTarget: eventPostTarget)
@@ -120,14 +138,18 @@ public final class CGEventKeyInjector: KeyInjecting {
         pressModifierIfNeeded(modifier, mode: mode, keyDown: false, eventPostTarget: eventPostTarget)
     }
 
-    public func recordDryRun(_ entry: String) {
-        guard dryRun else { return }
-        appendLog("DRY \(entry)")
+    public func recordPreview(_ entry: String) {
+        guard previewMode else { return }
+        appendLog("PREVIEW \(entry)")
     }
 
     public func releaseAll() {
-        guard !dryRun else { return }
-        for key in KeyboardKey.allCases {
+        guard !previewMode else { return }
+        stateLock.lock()
+        let heldKeys = Array(heldKeyCounts.keys)
+        heldKeyCounts.removeAll()
+        stateLock.unlock()
+        for key in heldKeys {
             post(key: key, modifier: .none, keyDown: false, eventPostTarget: .hidEventTap)
         }
         for target in EventPostTarget.allCases {
@@ -165,7 +187,7 @@ public final class CGEventKeyInjector: KeyInjecting {
 
     private func appendLog(_ entry: String) {
         logQueue.sync {
-            dryRunLog.append(entry)
+            previewLog.append(entry)
         }
     }
 
@@ -189,6 +211,7 @@ public final class CGEventKeyPoster: KeyEventPosting {
             keyDown: keyDown
         ) else { return }
         event.flags = modifier.cgEventFlags
+        tagAsPlayerGenerated(event)
         post(event, target: target)
     }
 
@@ -198,7 +221,15 @@ public final class CGEventKeyPoster: KeyEventPosting {
             return
         }
         event.flags = keyDown ? modifier.cgEventFlags : []
+        tagAsPlayerGenerated(event)
         post(event, target: target)
+    }
+
+    private func tagAsPlayerGenerated(_ event: CGEvent) {
+        event.setIntegerValueField(
+            .eventSourceUserData,
+            value: KeyboardEventDiagnostics.injectedEventMarker
+        )
     }
 
     private func post(_ event: CGEvent, target: EventPostTarget) {

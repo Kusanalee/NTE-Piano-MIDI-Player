@@ -5,6 +5,12 @@ public enum NTELayout {
     public static let naturalSemitones = [0, 2, 4, 5, 7, 9, 11]
     public static let naturalDegreeLabels = ["1", "2", "3", "4", "5", "6", "7"]
 
+    public static let layerSemitones: [NTELayer: [Int]] = [
+        .natural: [0, 2, 4, 5, 7, 9, 11],
+        .sharp: [1, 2, 4, 6, 8, 9, 11],
+        .flat: [0, 2, 3, 5, 7, 9, 10]
+    ]
+
     public static let rowKeys: [PianoRow: [KeyboardKey]] = [
         .bas: [.z, .x, .c, .v, .b, .n, .m],
         .mid: [.a, .s, .d, .f, .g, .h, .j],
@@ -42,6 +48,57 @@ public enum NTELayout {
         }
     }
 
+    public static func layers(containing semitone: Int) -> [NTELayer] {
+        NTELayer.allCases.filter { layerSemitones[$0]?.contains(semitone) == true }
+    }
+
+    public static func key(
+        for midiNote: Int,
+        baseMidiNote: Int,
+        layer: NTELayer,
+        manualOverrides: [String: KeyboardKey] = [:]
+    ) -> PianoKey? {
+        guard let row = row(for: midiNote, baseMidiNote: baseMidiNote),
+              let rowKeys = rowKeys[row],
+              let semitones = layerSemitones[layer] else {
+            return nil
+        }
+        let semitone = positiveModulo(midiNote - baseMidiNote, 12)
+        guard let index = semitones.firstIndex(of: semitone) else { return nil }
+        let keyboardKey = manualOverrides["\(row.rawValue).\(semitone)"] ?? rowKeys[index]
+        return PianoKey(
+            row: row,
+            semitone: semitone,
+            degreeLabel: degreeLabel(for: semitone),
+            noteName: noteNames[semitone],
+            keyboardKey: keyboardKey,
+            modifier: layer.modifier,
+            midiNote: midiNote
+        )
+    }
+
+    public static func nearestPlayableNote(
+        to midiNote: Int,
+        in layer: NTELayer,
+        range: ClosedRange<Int>,
+        maximumDistance: Int = 1
+    ) -> Int? {
+        let allowed = layerSemitones[layer] ?? []
+        let candidates = (-maximumDistance...maximumDistance).compactMap { delta -> Int? in
+            let candidate = midiNote + delta
+            guard range.contains(candidate), allowed.contains(positiveModulo(candidate - range.lowerBound, 12)) else {
+                return nil
+            }
+            return candidate
+        }
+        return candidates.min {
+            let lhsDistance = abs($0 - midiNote)
+            let rhsDistance = abs($1 - midiNote)
+            if lhsDistance == rhsDistance { return $0 < $1 }
+            return lhsDistance < rhsDistance
+        }
+    }
+
     public static func keys(for layoutMode: LayoutMode, baseMidiNote: Int) -> [PianoRow: [PianoKey]] {
         var result: [PianoRow: [PianoKey]] = [:]
         for row in PianoRow.allCases {
@@ -76,5 +133,14 @@ public enum NTELayout {
             }
         }
         return result
+    }
+
+    private static func degreeLabel(for semitone: Int) -> String {
+        chromaticDegreeMap[semitone]?.degree ?? noteNames[semitone]
+    }
+
+    private static func positiveModulo(_ value: Int, _ modulus: Int) -> Int {
+        let result = value % modulus
+        return result >= 0 ? result : result + modulus
     }
 }

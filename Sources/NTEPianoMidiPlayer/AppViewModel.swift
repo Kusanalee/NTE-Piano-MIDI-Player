@@ -10,34 +10,75 @@ final class AppViewModel: ObservableObject {
     @Published var document: MidiDocument?
     @Published var tracks: [MidiTrackInfo] = []
     @Published var mappedEvents: [MappedNoteEvent] = []
+    @Published var playableChords: [PlayableChord] = []
     @Published var diagnostics = MappingDiagnostics()
     @Published var playbackState: PlaybackState = .idle
     @Published var statusMessage = "Open a MIDI file to begin."
     @Published var searchText = ""
     @Published var progressTime: TimeInterval = 0
     @Published var seekTime: TimeInterval = 0
-    @Published var dryRunLogText = ""
+    @Published var previewLogText = ""
+    @Published var isPreviewMode: Bool
+    @Published var isArranging = false
     @Published var sheetText = ""
     @Published var sheetOptions = PianoSheetOptions() {
         didSet { regenerateSheet() }
     }
     @Published var showingSettings = false
     @Published var showingSheetExporter = false
+    @Published private(set) var isRecordingKeyboardEvents = false
+    @Published private(set) var keyboardEventTraceText = "No input-event trace recorded."
+    @Published private(set) var virtualHIDStatus: VirtualHIDConnectionStatus = .checking
+    @Published private(set) var virtualHIDReportTraceText = "No VirtualHID reports sent."
+    @Published private(set) var readiness: SetupReadiness = .blocked(.installDriver, detail: "Checking setup status…")
+    @Published var showingOnboarding = false
+    @Published var setupActionError: String?
+    @Published private(set) var isInstallingServices = false
+    @Published private(set) var countdownRemaining: TimeInterval?
 
-    let settingsStore = SettingsStore()
+    let settingsStore: SettingsStore
 
     private let loader = MidiFileLoader()
     private let scheduler = EventScheduler()
-    private let injector = CGEventKeyInjector(dryRun: true)
+    private let quartzInjector: CGEventKeyInjector
+    private let virtualHIDInjector: VirtualHIDKeyInjector
+    private var activeInjector: KeyInjecting?
+    private let keyboardEventRecorder = KeyboardEventRecorder()
     private let previewPlayer = MidiPreviewPlayer()
     private var settingsCancellable: AnyCancellable?
+    private var arrangementToken: ArrangementCancellationToken?
+    private var recordedKeyboardEvents: [RecordedKeyboardEvent] = []
+    private var keyboardEventTraceHeader = ""
+    private var readinessPollTimer: Timer?
+    private var countdownTimer: Timer?
+    private var countdownEndDate: Date?
 
-    init() {
+    /// Bump when onboarding needs to run again for existing users (e.g. a new required step).
+    static let currentOnboardingVersion = 1
+
+    init(settingsStore: SettingsStore = SettingsStore()) {
+        self.settingsStore = settingsStore
+        self.isPreviewMode = settingsStore.settings.startInPreviewMode
+        self.quartzInjector = CGEventKeyInjector(previewMode: settingsStore.settings.startInPreviewMode)
+        self.virtualHIDInjector = VirtualHIDKeyInjector(previewMode: settingsStore.settings.startInPreviewMode)
+        virtualHIDInjector.onFailure = { [weak self] message in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.scheduler.stop()
+                self.virtualHIDStatus = self.virtualHIDInjector.connectionStatus
+                self.virtualHIDReportTraceText = self.formattedVirtualHIDReportTrace()
+                self.playbackState = .stopped
+                self.statusMessage = "VirtualHID playback stopped: \(message)"
+            }
+        }
         settingsCancellable = settingsStore.settingsPublisher.sink { [weak self] _ in
             Task { @MainActor in
                 self?.refreshMapping()
             }
         }
+        refreshVirtualHIDStatus()
+        refreshReadiness()
+        showingOnboarding = settingsStore.settings.onboardingCompletedVersion < Self.currentOnboardingVersion
     }
 
     var duration: TimeInterval {
@@ -62,6 +103,83 @@ final class AppViewModel: ObservableObject {
             ].joined(separator: " ").lowercased()
             return haystack.contains(query)
         }
+    }
+
+    func startKeyboardEventRecording() {
+        recordedKeyboardEvents.removeAll()
+        let settings = settingsStore.settings.clamped()
+        keyboardEventTraceHeader = [
+            "NTE Piano MIDI Player input-event trace",
+            "mode=\(settings.modifierInjectionMode.rawValue) target=\(settings.eventPostTarget.rawValue)",
+            "PLAYER events carry marker=0x\(String(KeyboardEventDiagnostics.injectedEventMarker, radix: 16, uppercase: true))",
+            "VirtualHID events use the hardware path and may appear as EXTERNAL with pid=0.",
+            "Only Shift, Control, and the 21 piano letter keys are recorded."
+        ].joined(separator: "\n")
+        keyboardEventTraceText = keyboardEventTraceHeader + "\nWaiting for keyboard events…"
+
+        guard AccessibilityPermission.isTrusted(prompt: true) else {
+            keyboardEventTraceText = keyboardEventTraceHeader
+                + "\nERROR: Accessibility permission is required. Grant it, relaunch the app, and retry."
+            statusMessage = "Could not start input-event recorder. Grant Accessibility permission and relaunch."
+            return
+        }
+
+        let started = keyboardEventRecorder.start { [weak self] event in
+            DispatchQueue.main.async {
+                self?.appendRecordedKeyboardEvent(event)
+            }
+        }
+        isRecordingKeyboardEvents = started
+        if started {
+            statusMessage = "Input-event recorder started. Compare physical holds with Hold Shift and Hold Ctrl."
+        } else {
+            keyboardEventTraceText = keyboardEventTraceHeader
+                + "\nERROR: Could not create the HID event tap despite Accessibility permission. Relaunch the app and retry."
+            statusMessage = "Could not start input-event recorder despite Accessibility permission."
+        }
+    }
+
+    func stopKeyboardEventRecording() {
+        keyboardEventRecorder.stop()
+        isRecordingKeyboardEvents = false
+        refreshKeyboardEventTraceText()
+        statusMessage = "Input-event recorder stopped with \(recordedKeyboardEvents.count) captured events."
+    }
+
+    func clearKeyboardEventRecording() {
+        recordedKeyboardEvents.removeAll()
+        keyboardEventTraceHeader = ""
+        keyboardEventTraceText = "No input-event trace recorded."
+    }
+
+    func copyKeyboardEventTrace() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(keyboardEventTraceText, forType: .string)
+        statusMessage = "Input-event trace copied to the clipboard."
+    }
+
+    private func appendRecordedKeyboardEvent(_ event: RecordedKeyboardEvent) {
+        guard isRecordingKeyboardEvents else { return }
+        if recordedKeyboardEvents.count == 500 {
+            keyboardEventRecorder.stop()
+            isRecordingKeyboardEvents = false
+            statusMessage = "Input-event recorder reached its 500-event safety limit."
+            return
+        }
+        recordedKeyboardEvents.append(event)
+        refreshKeyboardEventTraceText()
+    }
+
+    private func refreshKeyboardEventTraceText() {
+        guard let firstTimestamp = recordedKeyboardEvents.first?.timestamp else {
+            keyboardEventTraceText = keyboardEventTraceHeader.isEmpty
+                ? "No input-event trace recorded."
+                : keyboardEventTraceHeader + "\nNo keyboard events captured."
+            return
+        }
+        let lines = recordedKeyboardEvents.map { $0.traceLine(relativeTo: firstTimestamp) }
+        keyboardEventTraceText = keyboardEventTraceHeader + "\n" + lines.joined(separator: "\n")
     }
 
     func openPanel() {
@@ -95,18 +213,16 @@ final class AppViewModel: ObservableObject {
 
     func refreshMapping() {
         guard let document else {
+            arrangementToken?.cancel()
             mappedEvents = []
+            playableChords = []
             diagnostics = MappingDiagnostics()
             sheetText = ""
             return
         }
         let events = selectedEvents(from: document.noteEvents)
         let settings = settingsStore.settings.clamped()
-        let mapper = NoteMapperFactory.mapper(for: settings.layoutMode)
-        let result = mapper.map(events: events, settings: settings)
-        mappedEvents = result.mappedEvents
-        diagnostics = result.diagnostics
-        regenerateSheet()
+        arrange(events: events, settings: settings, startPlaybackWhenReady: false)
     }
 
     func play() {
@@ -115,46 +231,52 @@ final class AppViewModel: ObservableObject {
             return
         }
 
-        refreshMapping()
-        guard !mappedEvents.isEmpty else {
-            statusMessage = "No playable notes after mapping. Check tracks, layout, transpose, and range settings."
+        guard let document else { return }
+        arrange(
+            events: selectedEvents(from: document.noteEvents),
+            settings: settingsStore.settings.clamped(),
+            startPlaybackWhenReady: true
+        )
+    }
+
+    private func startPreparedPlayback() {
+        guard !playableChords.isEmpty else {
+            statusMessage = "No playable notes after arrangement. Check tracks, layout, transpose, and range settings."
             return
         }
 
         let settings = settingsStore.settings.clamped()
-        if !settings.dryRun, !AccessibilityPermission.isTrusted(prompt: true) {
-            statusMessage = "Accessibility permission is required for keyboard injection. Dry-run and sheet export still work."
-            return
-        }
+        let previewMode = isPreviewMode
+        guard let injector = prepareInjector(settings: settings) else { return }
+        let injectionSettings = settingsForSelectedBackend(settings)
 
         let startOffset = min(max(seekTime, 0), duration)
-        let eventsToPlay = mappedEvents
+        let chordsToPlay = playableChords
             .filter { $0.startTime >= startOffset }
-            .map { event -> MappedNoteEvent in
-                var shifted = event
+            .map { chord -> PlayableChord in
+                var shifted = chord
                 shifted.startTime -= startOffset
                 return shifted
             }
 
-        guard !eventsToPlay.isEmpty else {
+        guard !chordsToPlay.isEmpty else {
             statusMessage = "Seek position is past the last playable note."
             return
         }
 
-        injector.dryRun = settings.dryRun
-        injector.clearDryRunLog()
-        dryRunLogText = ""
-        statusMessage = settings.dryRun ? "Dry-run playback started." : "Playback started. Focus NTE before the countdown ends."
+        previewLogText = ""
+        statusMessage = previewMode ? "Preview playback started." : "Playback started. Focus NTE before the countdown ends."
 
         let guarder = ForegroundAppGuard(acceptedNames: settings.acceptedForegroundAppNames)
         scheduler.start(
-            events: eventsToPlay,
-            settings: settings,
+            chords: chordsToPlay,
+            settings: injectionSettings,
             injector: injector,
-            frontmostGuard: { settings.dryRun || guarder.isAcceptedFrontmostApp() },
+            frontmostGuard: { previewMode || guarder.isAcceptedFrontmostApp() },
             onStateChange: { [weak self] state in
                 Task { @MainActor in
                     self?.playbackState = state
+                    self?.updateCountdownDisplay(for: state, duration: injectionSettings.countdownDuration)
                 }
             },
             onProgress: { [weak self] time in
@@ -174,6 +296,7 @@ final class AppViewModel: ObservableObject {
     func pause() {
         scheduler.pause()
         playbackState = .paused
+        endCountdownDisplay()
         statusMessage = "Playback paused."
     }
 
@@ -187,7 +310,10 @@ final class AppViewModel: ObservableObject {
         scheduler.stop()
         previewPlayer.stop()
         playbackState = .stopped
-        dryRunLogText = injector.dryRunLog.joined(separator: "\n")
+        endCountdownDisplay()
+        previewLogText = activeInjector?.previewLog.joined(separator: "\n") ?? ""
+        virtualHIDReportTraceText = formattedVirtualHIDReportTrace()
+        activeInjector = nil
         statusMessage = "Playback stopped."
     }
 
@@ -201,17 +327,17 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func togglePreviewPlayback() {
+    func toggleSpeakerPlayback() {
         guard let url = document?.url else { return }
         if previewPlayer.isPlaying {
             previewPlayer.stop()
-            statusMessage = "Speaker preview stopped."
+            statusMessage = "Speaker playback stopped."
         } else {
             do {
                 try previewPlayer.play(url: url, startTime: seekTime)
-                statusMessage = "Speaker preview started."
+                statusMessage = "Speaker playback started."
             } catch {
-                statusMessage = "Preview failed: \(error.localizedDescription)"
+                statusMessage = "Speaker playback failed: \(error.localizedDescription)"
             }
         }
     }
@@ -227,6 +353,137 @@ final class AppViewModel: ObservableObject {
         AccessibilityPermission.openAccessibilitySettings()
     }
 
+    func refreshVirtualHIDStatus() {
+        virtualHIDStatus = .checking
+        let injector = virtualHIDInjector
+        DispatchQueue.global(qos: .utility).async {
+            let status = injector.refreshConnectionStatus()
+            DispatchQueue.main.async { [weak self] in
+                self?.virtualHIDStatus = status
+            }
+        }
+    }
+
+    /// Re-runs the full setup ladder (driver, extension, background services, or
+    /// Accessibility, depending on the selected layout) on a background queue.
+    func refreshReadiness() {
+        let layoutMode = settingsStore.settings.layoutMode
+        let injector = virtualHIDInjector
+        DispatchQueue.global(qos: .utility).async {
+            let virtualHIDStatus = injector.refreshConnectionStatus()
+            let accessibilityTrusted = AccessibilityPermission.isTrusted(prompt: false)
+            let readiness = SetupInspector.readiness(
+                virtualHIDStatus: virtualHIDStatus,
+                layoutMode: layoutMode,
+                accessibilityTrusted: accessibilityTrusted
+            )
+            DispatchQueue.main.async { [weak self] in
+                self?.virtualHIDStatus = virtualHIDStatus
+                self?.readiness = readiness
+            }
+        }
+    }
+
+    /// Call from `.onAppear` on the onboarding sheet or the Settings General tab. Harmless to
+    /// call repeatedly; playback never polls.
+    func startReadinessPolling() {
+        stopReadinessPolling()
+        refreshReadiness()
+        readinessPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.refreshReadiness()
+        }
+    }
+
+    func stopReadinessPolling() {
+        readinessPollTimer?.invalidate()
+        readinessPollTimer = nil
+    }
+
+    func installPrivilegedServices() {
+        guard !isInstallingServices else { return }
+        isInstallingServices = true
+        setupActionError = nil
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try PrivilegedServiceInstaller.install()
+                DispatchQueue.main.async {
+                    self?.isInstallingServices = false
+                    self?.refreshReadiness()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.isInstallingServices = false
+                    self?.setupActionError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func removePrivilegedServices() {
+        guard !isInstallingServices else { return }
+        isInstallingServices = true
+        setupActionError = nil
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try PrivilegedServiceInstaller.uninstall()
+                DispatchQueue.main.async {
+                    self?.isInstallingServices = false
+                    self?.refreshReadiness()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.isInstallingServices = false
+                    self?.setupActionError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func activateDriverExtension() {
+        let path = "/Applications/.Karabiner-VirtualHIDDevice-Manager.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Manager"
+        guard FileManager.default.isExecutableFile(atPath: path) else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["activate"]
+        try? process.run()
+    }
+
+    func skipToTwentyOneKey() {
+        settingsStore.settings.layoutMode = .nte21Natural
+        refreshReadiness()
+    }
+
+    func completeOnboarding() {
+        settingsStore.settings.onboardingCompletedVersion = Self.currentOnboardingVersion
+        settingsStore.settings.startInPreviewMode = false
+        isPreviewMode = false
+        showingOnboarding = false
+    }
+
+    func openVirtualHIDReleasePage() {
+        guard let url = URL(string: "https://github.com/pqrs-org/Karabiner-DriverKit-VirtualHIDDevice/releases/tag/v8.2.0") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func copyVirtualHIDSetupCommands() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(virtualHIDSetupCommands, forType: .string)
+        statusMessage = "VirtualHID setup commands copied to the clipboard."
+    }
+
+    var virtualHIDSetupCommands: String {
+        let manager = "/Applications/.Karabiner-VirtualHIDDevice-Manager.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Manager"
+        let daemon = "/Library/Application Support/org.pqrs/Karabiner-DriverKit-VirtualHIDDevice/Applications/Karabiner-VirtualHIDDevice-Daemon.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Daemon"
+        let helper = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/NTEVirtualHIDBridge")
+            .path
+        return [
+            "'\(manager)' activate",
+            "sudo '\(daemon)'",
+            "sudo '\(helper)' --allowed-uid \(getuid())"
+        ].joined(separator: "\n")
+    }
+
     func sendCalibrationNatural() {
         sendCalibration(keys: calibrationKeys(semitones: [0], exactModifiers: false), label: "Natural calibration")
     }
@@ -239,24 +496,16 @@ final class AppViewModel: ObservableObject {
         sendCalibration(keys: calibrationKeys(semitones: [3], exactModifiers: true), label: "Ctrl flat calibration")
     }
 
-    func sendCalibrationApproximation() {
-        sendCalibration(keys: calibrationKeys(semitones: [0, 2], exactModifiers: false), label: "Neighbor approximation calibration")
-    }
-
     func sendCalibrationLayerSequence() {
         let settings = settingsStore.settings.clamped()
-        if !settings.dryRun, !AccessibilityPermission.isTrusted(prompt: true) {
-            statusMessage = "Accessibility permission is required for calibration key injection."
-            return
-        }
-        injector.dryRun = settings.dryRun
-        injector.clearDryRunLog()
+        guard let injector = prepareInjector(settings: settings) else { return }
+        let injectionSettings = settingsForSelectedBackend(settings)
         statusMessage = "Layer sequence calibration started. Focus NTE before the countdown ends."
 
-        let events = calibrationLayerSequenceEvents(settings: settings)
-        let groups = EventTimelineBuilder.group(events: events, threshold: settings.chordThreshold)
-        let actions = LayeredPlaybackPlanner.plan(groups: groups, settings: settings)
-        runCalibrationActions(actions, settings: settings, label: "Layer sequence calibration")
+        let events = calibrationLayerSequenceEvents(settings: injectionSettings)
+        let groups = EventTimelineBuilder.group(events: events, threshold: injectionSettings.chordThreshold)
+        let actions = LayeredPlaybackPlanner.plan(groups: groups, settings: injectionSettings)
+        runCalibrationActions(actions, settings: injectionSettings, injector: injector, label: "Layer sequence calibration")
     }
 
     func holdCalibrationShift() {
@@ -284,47 +533,80 @@ final class AppViewModel: ObservableObject {
         return events.filter { activeTrackIDs.contains($0.trackIndex) }
     }
 
+    private func arrange(
+        events: [MidiNoteEvent],
+        settings: PlaybackSettings,
+        startPlaybackWhenReady: Bool
+    ) {
+        arrangementToken?.cancel()
+        let token = ArrangementCancellationToken()
+        arrangementToken = token
+        isArranging = true
+        statusMessage = startPlaybackWhenReady ? "Preparing arrangement…" : "Updating arrangement…"
+        let unsupportedExpressionEventCount = document?.unsupportedExpressionEventCount ?? 0
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = UniversalMidiArranger(layoutMode: settings.layoutMode).arrange(
+                events: events,
+                settings: settings,
+                isCancelled: token.isCancelled
+            )
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.arrangementToken === token, !token.isCancelled() else { return }
+                self.isArranging = false
+                self.mappedEvents = result.mappedEvents
+                self.playableChords = result.playableChords
+                var diagnostics = result.diagnostics
+                diagnostics.unsupportedExpressionEvents = unsupportedExpressionEventCount
+                if unsupportedExpressionEventCount > 0 {
+                    diagnostics.warnings.append(
+                        "\(unsupportedExpressionEventCount) pitch-bend or aftertouch events cannot be reproduced by NTE."
+                    )
+                }
+                self.diagnostics = diagnostics
+                self.regenerateSheet()
+                let onsetCount = Set(result.playableChords.map(\.startTime)).count
+                self.statusMessage = "Arranged \(result.mappedEvents.count) playable notes in \(onsetCount) chords."
+                if startPlaybackWhenReady { self.startPreparedPlayback() }
+            }
+        }
+    }
+
     private func regenerateSheet() {
         sheetText = PianoSheetExporter().export(events: mappedEvents, options: sheetOptions)
     }
 
     private func sendCalibration(keys: [PianoKey], label: String) {
         let settings = settingsStore.settings.clamped()
-        if !settings.dryRun, !AccessibilityPermission.isTrusted(prompt: true) {
-            statusMessage = "Accessibility permission is required for calibration key injection."
-            return
-        }
-        injector.dryRun = settings.dryRun
-        injector.clearDryRunLog()
+        guard let injector = prepareInjector(settings: settings) else { return }
+        let injectionSettings = settingsForSelectedBackend(settings)
         statusMessage = "\(label) started. Focus NTE before the countdown ends."
 
-        let actions = calibrationActions(for: keys, settings: settings)
-        runCalibrationActions(actions, settings: settings, label: label)
+        let actions = calibrationActions(for: keys, settings: injectionSettings)
+        runCalibrationActions(actions, settings: injectionSettings, injector: injector, label: label)
     }
 
     private func holdCalibration(modifier: KeyModifier, label: String) {
         let settings = settingsStore.settings.clamped()
-        if !settings.dryRun, !AccessibilityPermission.isTrusted(prompt: true) {
-            statusMessage = "Accessibility permission is required for calibration key injection."
-            return
-        }
-        injector.dryRun = settings.dryRun
-        injector.clearDryRunLog()
+        guard let injector = prepareInjector(settings: settings) else { return }
+        let injectionSettings = settingsForSelectedBackend(settings)
+        let backendDescription = backendDescription(settings: settings)
         statusMessage = "\(label) started. Focus NTE before the countdown ends."
 
-        let injector = self.injector
         DispatchQueue.global(qos: .userInitiated).async {
-            Self.sleep(until: settings.countdownDuration, startNanos: DispatchTime.now().uptimeNanoseconds)
+            Self.sleep(until: injectionSettings.countdownDuration, startNanos: DispatchTime.now().uptimeNanoseconds)
             injector.holdModifier(
                 modifier,
-                mode: settings.modifierInjectionMode,
+                mode: injectionSettings.modifierInjectionMode,
                 duration: 2.0,
-                eventPostTarget: settings.eventPostTarget,
-                dryRunDescription: "\(label) using \(settings.eventPostTarget.displayName)"
+                eventPostTarget: injectionSettings.eventPostTarget,
+                previewDescription: "\(label) using \(backendDescription)"
             )
-            let logText = injector.dryRunLog.joined(separator: "\n")
+            injector.releaseAll()
+            let logText = injector.previewLog.joined(separator: "\n")
             DispatchQueue.main.async { [weak self] in
-                self?.dryRunLogText = logText
+                self?.previewLogText = logText
+                self?.virtualHIDReportTraceText = self?.formattedVirtualHIDReportTrace() ?? ""
                 self?.statusMessage = "\(label) completed."
             }
         }
@@ -382,8 +664,13 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func runCalibrationActions(_ actions: [ScheduledPlaybackAction], settings: PlaybackSettings, label: String) {
-        let injector = self.injector
+    private func runCalibrationActions(
+        _ actions: [ScheduledPlaybackAction],
+        settings: PlaybackSettings,
+        injector: KeyInjecting,
+        label: String
+    ) {
+        let backendDescription = backendDescription(settings: settings)
         DispatchQueue.global(qos: .userInitiated).async {
             let startNanos = DispatchTime.now().uptimeNanoseconds
             for action in actions {
@@ -403,16 +690,18 @@ final class AppViewModel: ObservableObject {
                         keyDown: keyDown,
                         eventPostTarget: settings.eventPostTarget
                     )
-                case let .dryRun(entry):
-                    injector.recordDryRun("\(entry) via \(settings.eventPostTarget.displayName)")
+                case let .preview(entry):
+                    injector.recordPreview("\(entry) via \(backendDescription)")
                 case .progress:
                     break
                 }
             }
-            let logText = injector.dryRunLog.joined(separator: "\n")
+            injector.releaseAll()
+            let logText = injector.previewLog.joined(separator: "\n")
             DispatchQueue.main.async { [weak self] in
-                self?.dryRunLogText = logText
-                self?.statusMessage = "\(label) sent using \(settings.eventPostTarget.displayName)."
+                self?.previewLogText = logText
+                self?.virtualHIDReportTraceText = self?.formattedVirtualHIDReportTrace() ?? ""
+                self?.statusMessage = "\(label) sent using \(backendDescription)."
             }
         }
     }
@@ -448,8 +737,99 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func prepareInjector(settings: PlaybackSettings) -> KeyInjecting? {
+        let injector: KeyInjecting
+        if isPreviewMode {
+            injector = quartzInjector
+        } else {
+            switch settings.layoutMode {
+            case .nte21Natural:
+                guard AccessibilityPermission.isTrusted(prompt: true) else {
+                    statusMessage = "Accessibility permission is required for 21-key keyboard injection. Preview Mode and sheet export still work."
+                    return nil
+                }
+                injector = quartzInjector
+            case .nte36Chromatic:
+                let status = virtualHIDInjector.refreshConnectionStatus()
+                virtualHIDStatus = status
+                guard status.isReady else {
+                    statusMessage = "36-key playback requires VirtualHID: \(status.guidance)"
+                    return nil
+                }
+                virtualHIDInjector.clearReportTrace()
+                virtualHIDReportTraceText = "Waiting for VirtualHID reports…"
+                injector = virtualHIDInjector
+            }
+        }
+        injector.previewMode = isPreviewMode
+        injector.clearPreviewLog()
+        activeInjector = injector
+        return injector
+    }
+
+    private func settingsForSelectedBackend(_ settings: PlaybackSettings) -> PlaybackSettings {
+        guard !isPreviewMode, settings.layoutMode == .nte36Chromatic else { return settings }
+        var copy = settings
+        copy.modifierInjectionMode = .hardwareStateLeft
+        return copy
+    }
+
+    private func backendDescription(settings: PlaybackSettings) -> String {
+        if isPreviewMode { return "Preview Mode" }
+        return settings.layoutMode == .nte36Chromatic
+            ? "Karabiner VirtualHID"
+            : settings.eventPostTarget.displayName
+    }
+
+    private func formattedVirtualHIDReportTrace() -> String {
+        let lines = virtualHIDInjector.reportTrace
+        guard !lines.isEmpty else { return "No VirtualHID reports sent." }
+        return ([
+            "NTE Piano MIDI Player VirtualHID report trace",
+            "bridgeProtocol=\(VirtualHIDConstants.protocolVersion) driver=\(VirtualHIDConstants.expectedDriverVersion) upstreamProtocol=\(VirtualHIDConstants.expectedClientProtocolVersion)"
+        ] + lines).joined(separator: "\n")
+    }
+
+    private func updateCountdownDisplay(for state: PlaybackState, duration: TimeInterval) {
+        if state == .countingDown {
+            beginCountdownDisplay(duration: duration)
+        } else {
+            endCountdownDisplay()
+        }
+    }
+
+    private func beginCountdownDisplay(duration: TimeInterval) {
+        guard duration > 0 else { return }
+        countdownTimer?.invalidate()
+        let endDate = Date().addingTimeInterval(duration)
+        countdownEndDate = endDate
+        countdownRemaining = duration
+        countdownTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
+            guard let self, let endDate = self.countdownEndDate else {
+                timer.invalidate()
+                return
+            }
+            let remaining = endDate.timeIntervalSinceNow
+            if remaining <= 0 {
+                self.countdownRemaining = 0
+                timer.invalidate()
+            } else {
+                self.countdownRemaining = remaining
+            }
+        }
+    }
+
+    private func endCountdownDisplay() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        countdownEndDate = nil
+        countdownRemaining = nil
+    }
+
     private func handleFinish(_ reason: PlaybackFinishReason) {
-        dryRunLogText = injector.dryRunLog.joined(separator: "\n")
+        previewLogText = activeInjector?.previewLog.joined(separator: "\n") ?? ""
+        virtualHIDReportTraceText = formattedVirtualHIDReportTrace()
+        activeInjector = nil
         switch reason {
         case .completed:
             playbackState = .completed
@@ -497,5 +877,22 @@ final class MidiPreviewPlayer {
         player?.stop()
         player = nil
         isPlaying = false
+    }
+}
+
+private final class ArrangementCancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    func isCancelled() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
     }
 }
